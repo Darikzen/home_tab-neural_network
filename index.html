@@ -10,13 +10,13 @@
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
             overflow: hidden;
             background: #212121;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }
-        
+
         canvas {
             display: block;
             position: absolute;
@@ -27,16 +27,19 @@
 </head>
 <body>
     <canvas id="neuralCanvas"></canvas>
-    
+
     <script>
         const canvas = document.getElementById('neuralCanvas');
         const ctx = canvas.getContext('2d');
-        
+
+        // Use screen dimensions for pre-generation, viewport for display
+        const screenW = window.screen.width;
+        const screenH = window.screen.height;
         let width = canvas.width = window.innerWidth;
         let height = canvas.height = window.innerHeight;
-        
+
         const mouse = { x: width / 2, y: height / 2 };
-        
+
         // Material Design grays
         const colors = {
             bg: '#212121',
@@ -44,17 +47,28 @@
             neuronMid: '#9E9E9E',
             neuronDark: '#757575'
         };
-        
+
+        // Density-based neuron calculation (neurons per million pixels)
+        // Ensures consistent density across all screen sizes
+        const DENSITY = 55; // neurons per million pixels
+        const screenArea = screenW * screenH;
+        const totalNeurons = Math.round((screenArea / 1000000) * DENSITY);
+
+        // Layer distribution ratios
+        const layerRatios = [0.19, 0.33, 0.48]; // background, mid, foreground
+        const neuronsPerLayer = layerRatios.map(ratio => Math.max(3, Math.round(totalNeurons * ratio)));
+
         class Neuron {
             constructor(layer) {
                 this.layer = layer;
-                this.baseX = Math.random() * width;
-                this.baseY = Math.random() * height;
+                // Simple random distribution across full screen
+                this.baseX = Math.random() * screenW;
+                this.baseY = Math.random() * screenH;
                 this.x = this.baseX;
                 this.y = this.baseY;
                 this.vx = 0;
                 this.vy = 0;
-                
+
                 // REVERSED Depth properties - far = larger, foggy
                 const reversedLayer = 2 - layer; // Reverse: 0->2, 1->1, 2->0
                 this.size = 8 + (reversedLayer * 6); // Far neurons much larger: 20, 14, 8
@@ -62,7 +76,10 @@
                 this.returnForce = 0.015 + (layer * 0.01);
                 this.repelRadius = 80 + (layer * 40);
                 this.repelForce = 1.5 + (layer * 0.8);
-                
+
+                // Connection distances per layer
+                this.maxConnectionDist = layer === 0 ? 300 : layer === 1 ? 250 : 200;
+
                 // Color based on depth - far is foggy/lighter
                 if (layer === 0) { // Background - far, large, foggy
                     this.color = colors.neuronLight;
@@ -77,94 +94,89 @@
                     this.alpha = 0.7;
                     this.blur = 0;
                 }
-                
-                this.connections = [];
             }
-            
+
             update() {
                 // Calculate distance to mouse
                 const dx = this.x - mouse.x;
                 const dy = this.y - mouse.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
-                
+
                 // Repel from mouse if within radius
                 if (dist < this.repelRadius && dist > 0) {
                     const force = (1 - dist / this.repelRadius) * this.repelForce;
                     this.vx += (dx / dist) * force;
                     this.vy += (dy / dist) * force;
                 }
-                
+
                 // Return to base position
                 const returnDx = this.baseX - this.x;
                 const returnDy = this.baseY - this.y;
                 this.vx += returnDx * this.returnForce;
                 this.vy += returnDy * this.returnForce;
-                
+
                 // Apply friction
                 this.vx *= 0.92;
                 this.vy *= 0.92;
-                
+
                 // Limit speed
                 const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
                 if (speed > this.maxSpeed) {
                     this.vx = (this.vx / speed) * this.maxSpeed;
                     this.vy = (this.vy / speed) * this.maxSpeed;
                 }
-                
+
                 // Update position
                 this.x += this.vx;
                 this.y += this.vy;
             }
-            
+
+            drawConnectionTo(other) {
+                const dist = Math.sqrt(
+                    (this.x - other.x) ** 2 + (this.y - other.y) ** 2
+                );
+                const maxDist = this.layer === 0 ? 250 : this.layer === 1 ? 200 : 150;
+
+                if (dist < maxDist && dist > 0) {
+                    const alpha = (1 - dist / maxDist) * this.alpha * 0.3;
+
+                    // Calculate connection points on neuron surfaces
+                    const angle = Math.atan2(other.y - this.y, other.x - this.x);
+                    const startX = this.x + Math.cos(angle) * this.size;
+                    const startY = this.y + Math.sin(angle) * this.size;
+                    const endX = other.x - Math.cos(angle) * other.size;
+                    const endY = other.y - Math.sin(angle) * other.size;
+
+                    // Create organic curve with random offset for vibrating effect
+                    const midX = (startX + endX) / 2 + (Math.random() - 0.5) * 20;
+                    const midY = (startY + endY) / 2 + (Math.random() - 0.5) * 20;
+
+                    // Draw tapered connection using gradient
+                    const gradient = ctx.createLinearGradient(startX, startY, endX, endY);
+                    const color = this.color;
+                    gradient.addColorStop(0, `${color}00`);
+                    gradient.addColorStop(0.15, color);
+                    gradient.addColorStop(0.85, color);
+                    gradient.addColorStop(1, `${color}00`);
+
+                    ctx.globalAlpha = alpha;
+                    ctx.strokeStyle = gradient;
+
+                    // Thicker connections for far neurons
+                    const lineWidth = this.layer === 0 ? 3 : this.layer === 1 ? 2 : 1.2;
+                    ctx.lineWidth = lineWidth;
+                    ctx.lineCap = 'round';
+
+                    ctx.beginPath();
+                    ctx.moveTo(startX, startY);
+                    ctx.quadraticCurveTo(midX, midY, endX, endY);
+                    ctx.stroke();
+                }
+            }
+
             draw() {
-                // Draw organic connections with smooth tapering
-                this.connections.forEach(other => {
-                    const dist = Math.sqrt(
-                        (this.x - other.x) ** 2 + (this.y - other.y) ** 2
-                    );
-                    const maxDist = this.layer === 0 ? 250 : this.layer === 1 ? 200 : 150;
-                    
-                    if (dist < maxDist && dist > 0) {
-                        const alpha = (1 - dist / maxDist) * this.alpha * 0.3;
-                        
-                        // Calculate connection points on neuron surfaces
-                        const angle = Math.atan2(other.y - this.y, other.x - this.x);
-                        const startX = this.x + Math.cos(angle) * this.size;
-                        const startY = this.y + Math.sin(angle) * this.size;
-                        const endX = other.x - Math.cos(angle) * other.size;
-                        const endY = other.y - Math.sin(angle) * other.size;
-                        
-                        // Create organic curve
-                        const midX = (startX + endX) / 2 + (Math.random() - 0.5) * 20;
-                        const midY = (startY + endY) / 2 + (Math.random() - 0.5) * 20;
-                        
-                        // Draw tapered connection using gradient
-                        const gradient = ctx.createLinearGradient(startX, startY, endX, endY);
-                        const color = this.color;
-                        gradient.addColorStop(0, `${color}00`); // Transparent at neuron edge
-                        gradient.addColorStop(0.15, color);
-                        gradient.addColorStop(0.85, color);
-                        gradient.addColorStop(1, `${color}00`); // Transparent at other neuron edge
-                        
-                        ctx.globalAlpha = alpha;
-                        ctx.strokeStyle = gradient;
-                        
-                        // Thicker connections for far neurons
-                        const lineWidth = this.layer === 0 ? 3 : this.layer === 1 ? 2 : 1.2;
-                        ctx.lineWidth = lineWidth;
-                        ctx.lineCap = 'round';
-                        
-                        // Draw smooth organic curve
-                        ctx.beginPath();
-                        ctx.moveTo(startX, startY);
-                        ctx.quadraticCurveTo(midX, midY, endX, endY);
-                        ctx.stroke();
-                    }
-                });
-                
                 // Draw neuron body with atmospheric glow for far neurons
                 if (this.blur > 0) {
-                    // Large foggy glow for distant neurons
                     ctx.globalAlpha = this.alpha * 0.2;
                     ctx.fillStyle = this.color;
                     ctx.filter = `blur(${this.blur}px)`;
@@ -173,14 +185,14 @@
                     ctx.fill();
                     ctx.filter = 'none';
                 }
-                
+
                 // Main neuron body
                 ctx.globalAlpha = this.alpha;
                 ctx.fillStyle = this.color;
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
                 ctx.fill();
-                
+
                 // Inner core highlight
                 ctx.globalAlpha = this.alpha * 0.6;
                 ctx.fillStyle = '#ffffff';
@@ -189,77 +201,65 @@
                 ctx.fill();
             }
         }
-        
-        // Create layers of neurons - fewer large far neurons, more small near ones
+
+        // Create layers of neurons with density-based counts
         const layers = [[], [], []];
-        const neuronsPerLayer = [20, 35, 50]; // Background has fewer but larger neurons
-        
+
         for (let layer = 0; layer < 3; layer++) {
             for (let i = 0; i < neuronsPerLayer[layer]; i++) {
                 layers[layer].push(new Neuron(layer));
             }
         }
-        
-        // Connect nearby neurons within same layer - larger distances for background
-        layers.forEach((layer, layerIndex) => {
-            const maxConnectionDist = layerIndex === 0 ? 300 : layerIndex === 1 ? 250 : 200;
-            layer.forEach((neuron, i) => {
-                layer.slice(i + 1).forEach(other => {
-                    const dist = Math.sqrt(
-                        (neuron.baseX - other.baseX) ** 2 + 
-                        (neuron.baseY - other.baseY) ** 2
-                    );
-                    if (dist < maxConnectionDist) {
-                        neuron.connections.push(other);
-                    }
-                });
-            });
-        });
-        
+
         // Mouse tracking
         window.addEventListener('mousemove', (e) => {
             mouse.x = e.clientX;
             mouse.y = e.clientY;
         });
-        
-        // Handle resize
+
+        // Handle resize - just update canvas, neurons are pre-generated for full screen
         window.addEventListener('resize', () => {
             width = canvas.width = window.innerWidth;
             height = canvas.height = window.innerHeight;
-            
-            // Reposition neurons proportionally
-            layers.forEach(layer => {
-                layer.forEach(neuron => {
-                    neuron.baseX = (neuron.baseX / width) * window.innerWidth;
-                    neuron.baseY = (neuron.baseY / height) * window.innerHeight;
-                    neuron.x = neuron.baseX;
-                    neuron.y = neuron.baseY;
-                });
-            });
         });
-        
-        // Animation loop
+
+        // Animation loop with dynamic connections
         function animate() {
-            // Clear with background color
             ctx.fillStyle = colors.bg;
             ctx.fillRect(0, 0, width, height);
-            
+
             // Draw layers from back to front (0 = far/large, 2 = near/small)
             [0, 1, 2].forEach(layerIndex => {
-                ctx.filter = 'none'; // Reset filter for each layer
-                
-                layers[layerIndex].forEach(neuron => {
-                    neuron.update();
-                    neuron.draw();
-                });
+                ctx.filter = 'none';
+                const layer = layers[layerIndex];
+
+                // Update all neurons first
+                layer.forEach(neuron => neuron.update());
+
+                // Dynamic connections - check all pairs in this layer
+                for (let i = 0; i < layer.length; i++) {
+                    for (let j = i + 1; j < layer.length; j++) {
+                        const neuron = layer[i];
+                        const other = layer[j];
+                        const dist = Math.sqrt(
+                            (neuron.x - other.x) ** 2 + (neuron.y - other.y) ** 2
+                        );
+                        if (dist < neuron.maxConnectionDist) {
+                            neuron.drawConnectionTo(other);
+                        }
+                    }
+                }
+
+                // Draw all neuron bodies
+                layer.forEach(neuron => neuron.draw());
             });
-            
+
             ctx.filter = 'none';
             ctx.globalAlpha = 1;
-            
+
             requestAnimationFrame(animate);
         }
-        
+
         animate();
     </script>
 </body>
