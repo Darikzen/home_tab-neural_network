@@ -22,7 +22,6 @@
             position: absolute;
             top: 0;
             left: 0;
-            cursor: crosshair;
         }
     </style>
 </head>
@@ -33,13 +32,44 @@
         const canvas = document.getElementById('neuralCanvas');
         const ctx = canvas.getContext('2d');
 
-        // Use screen dimensions for pre-generation, viewport for display
-        const screenW = window.screen.width;
-        const screenH = window.screen.height;
+        // Custom crosshair: 4 short lines, empty center, neuron-halo gray
+        const _cursorSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><line x1="16" y1="3" x2="16" y2="11" stroke="#BDBDBD" stroke-width="1.5" stroke-linecap="round" opacity="0.75"/><line x1="16" y1="21" x2="16" y2="29" stroke="#BDBDBD" stroke-width="1.5" stroke-linecap="round" opacity="0.75"/><line x1="3" y1="16" x2="11" y2="16" stroke="#BDBDBD" stroke-width="1.5" stroke-linecap="round" opacity="0.75"/><line x1="21" y1="16" x2="29" y2="16" stroke="#BDBDBD" stroke-width="1.5" stroke-linecap="round" opacity="0.75"/></svg>`;
+        const customCursor = `url("data:image/svg+xml,${encodeURIComponent(_cursorSVG)}") 16 16, crosshair`;
+        canvas.style.cursor = customCursor;
+
         let width = canvas.width = window.innerWidth;
         let height = canvas.height = window.innerHeight;
 
+        // World-space mouse position (converted from screen each frame)
         const mouse = { x: width / 2, y: height / 2 };
+
+        // ── Camera ──────────────────────────────────────────────────────────
+        const camera = { x: 0, y: 0, zoom: 1 };
+        const MIN_ZOOM = 0.15;
+        const MAX_ZOOM = 8;
+
+        // Pan state
+        let isPanning = false;
+        let panStart  = { x: 0, y: 0 };
+        let panOrigin = { x: 0, y: 0 };
+
+        function screenToWorld(sx, sy) {
+            return {
+                x: (sx - camera.x) / camera.zoom,
+                y: (sy - camera.y) / camera.zoom
+            };
+        }
+
+        // Visible world rect (with padding so edge neurons aren't clipped)
+        function getViewport() {
+            const pad = 120;
+            return {
+                left:   (-camera.x / camera.zoom) - pad,
+                top:    (-camera.y / camera.zoom) - pad,
+                right:  ((width  - camera.x) / camera.zoom) + pad,
+                bottom: ((height - camera.y) / camera.zoom) + pad
+            };
+        }
 
         // Material Design grays
         const colors = {
@@ -49,124 +79,128 @@
             neuronDark: '#757575'
         };
 
-        // Density-based neuron calculation (neurons per million pixels)
-        // Ensures consistent density across all screen sizes
-        const DENSITY = 55; // neurons per million pixels
-        const screenArea = screenW * screenH;
-        const totalNeurons = Math.round((screenArea / 1000000) * DENSITY);
+        // ── Spatial chunking ────────────────────────────────────────────────
+        // World is divided into CHUNK_SIZE × CHUNK_SIZE cells.
+        // Each cell generates neurons deterministically via a seeded hash,
+        // so the network looks the same whenever you revisit a region.
 
-        // Layer distribution ratios
-        const layerRatios = [0.19, 0.33, 0.48]; // background, mid, foreground
-        const neuronsPerLayer = layerRatios.map(ratio => Math.max(3, Math.round(totalNeurons * ratio)));
+        const DENSITY    = 55;   // neurons per million world-pixels (matches original)
+        const CHUNK_SIZE = 600;  // world units; > maxConnectionDist so edges connect naturally
+        const NEURONS_PER_CHUNK = Math.max(4, Math.round(DENSITY * (CHUNK_SIZE * CHUNK_SIZE) / 1_000_000));
+
+        const layerRatios = [0.19, 0.33, 0.48]; // back → front
+
+        // Deterministic hash: maps (chunk coords + layer + index + field) → [0, 1)
+        function chunkRand(cx, cy, layer, i, field) {
+            let s = (cx * 73856093 ^ cy * 19349663 ^ layer * 83492791 ^ i * 2654435761 ^ field * 123456789) >>> 0;
+            s = Math.imul(s ^ (s >>> 16), 0x45d9f3b) >>> 0;
+            s = Math.imul(s ^ (s >>> 16), 0x45d9f3b) >>> 0;
+            return ((s ^ (s >>> 16)) >>> 0) / 0xFFFFFFFF;
+        }
 
         class Neuron {
             constructor(layer) {
                 this.layer = layer;
-                // Simple random distribution across full screen
-                this.baseX = Math.random() * screenW;
-                this.baseY = Math.random() * screenH;
-                this.x = this.baseX;
-                this.y = this.baseY;
-                this.vx = 0;
-                this.vy = 0;
+                // baseX/baseY/x/y are set by generateChunk after construction
+                this.baseX = 0; this.baseY = 0;
+                this.x = 0;     this.y = 0;
+                this.vx = 0;    this.vy = 0;
+                this.dragScale   = 1.0;
+                this.brightScale = 1.0;
 
-                // REVERSED Depth properties - far = larger, foggy
-                const reversedLayer = 2 - layer; // Reverse: 0->2, 1->1, 2->0
-                this.size = 8 + (reversedLayer * 6); // Far neurons much larger: 20, 14, 8
-                this.maxSpeed = 0.3 + (layer * 0.2); // Near neurons move more
-                this.returnForce = 0.015 + (layer * 0.01);
-                this.repelRadius = 80 + (layer * 40);
-                this.repelForce = 1.5 + (layer * 0.8);
-
-                // Connection distances per layer
+                // REVERSED depth — far = larger, foggy
+                const reversedLayer = 2 - layer;
+                this.size         = 8 + (reversedLayer * 6);
+                this.maxSpeed     = 0.3 + (layer * 0.2);
+                this.returnForce  = 0.015 + (layer * 0.01);
+                this.repelRadius  = 80 + (layer * 40);
+                this.repelForce   = 1.5 + (layer * 0.8);
                 this.maxConnectionDist = layer === 0 ? 300 : layer === 1 ? 250 : 200;
 
-                // Color based on depth - far is foggy/lighter
-                if (layer === 0) { // Background - far, large, foggy
+                if (layer === 0) {
                     this.color = colors.neuronLight;
                     this.alpha = 0.25;
-                    this.blur = 8;
-                } else if (layer === 1) { // Mid
+                    this.blur  = 8;
+                } else if (layer === 1) {
                     this.color = colors.neuronMid;
                     this.alpha = 0.45;
-                    this.blur = 3;
-                } else { // Foreground - near, small, sharp
+                    this.blur  = 3;
+                } else {
                     this.color = colors.neuronDark;
                     this.alpha = 0.7;
-                    this.blur = 0;
+                    this.blur  = 0;
                 }
             }
 
-            update() {
-                // Calculate distance to mouse
-                const dx = this.x - mouse.x;
-                const dy = this.y - mouse.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-
-                // Repel from mouse if within radius
-                if (dist < this.repelRadius && dist > 0) {
-                    const force = (1 - dist / this.repelRadius) * this.repelForce;
-                    this.vx += (dx / dist) * force;
-                    this.vy += (dy / dist) * force;
+            // skipRepel: true while panning so the world-mouse jump doesn't scatter neurons
+            update(skipRepel) {
+                if (!skipRepel) {
+                    const dx = this.x - mouse.x;
+                    const dy = this.y - mouse.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < this.repelRadius && dist > 0) {
+                        const force = (1 - dist / this.repelRadius) * this.repelForce;
+                        this.vx += (dx / dist) * force;
+                        this.vy += (dy / dist) * force;
+                    }
                 }
 
-                // Return to base position
                 const returnDx = this.baseX - this.x;
                 const returnDy = this.baseY - this.y;
                 this.vx += returnDx * this.returnForce;
                 this.vy += returnDy * this.returnForce;
 
-                // Apply friction
                 this.vx *= 0.92;
                 this.vy *= 0.92;
 
-                // Limit speed
                 const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
                 if (speed > this.maxSpeed) {
                     this.vx = (this.vx / speed) * this.maxSpeed;
                     this.vy = (this.vy / speed) * this.maxSpeed;
                 }
 
-                // Update position
                 this.x += this.vx;
                 this.y += this.vy;
+
+                this.dragScale   += (1.0 - this.dragScale)   * 0.1;
+                this.brightScale += (1.0 - this.brightScale) * 0.1;
+            }
+
+            // Cheap AABB — world coords, includes halo radius
+            isInViewport(vp) {
+                const r = this.size * this.dragScale * 3;
+                return this.x + r > vp.left && this.x - r < vp.right &&
+                       this.y + r > vp.top  && this.y - r < vp.bottom;
             }
 
             drawConnectionTo(other) {
-                const dist = Math.sqrt(
-                    (this.x - other.x) ** 2 + (this.y - other.y) ** 2
-                );
+                const dx = this.x - other.x;
+                const dy = this.y - other.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
                 const maxDist = this.layer === 0 ? 250 : this.layer === 1 ? 200 : 150;
 
                 if (dist < maxDist && dist > 0) {
                     const alpha = (1 - dist / maxDist) * this.alpha * 0.3;
-
-                    // Calculate connection points on neuron surfaces
                     const angle = Math.atan2(other.y - this.y, other.x - this.x);
-                    const startX = this.x + Math.cos(angle) * this.size;
-                    const startY = this.y + Math.sin(angle) * this.size;
-                    const endX = other.x - Math.cos(angle) * other.size;
-                    const endY = other.y - Math.sin(angle) * other.size;
+                    const startX = this.x + Math.cos(angle) * this.size * this.dragScale;
+                    const startY = this.y + Math.sin(angle) * this.size * this.dragScale;
+                    const endX   = other.x - Math.cos(angle) * other.size * other.dragScale;
+                    const endY   = other.y - Math.sin(angle) * other.size * other.dragScale;
 
-                    // Create organic curve with random offset for vibrating effect
                     const midX = (startX + endX) / 2 + (Math.random() - 0.5) * 20;
                     const midY = (startY + endY) / 2 + (Math.random() - 0.5) * 20;
 
-                    // Draw tapered connection using gradient
                     const gradient = ctx.createLinearGradient(startX, startY, endX, endY);
                     const color = this.color;
-                    gradient.addColorStop(0, `${color}00`);
+                    gradient.addColorStop(0,    `${color}00`);
                     gradient.addColorStop(0.15, color);
                     gradient.addColorStop(0.85, color);
-                    gradient.addColorStop(1, `${color}00`);
+                    gradient.addColorStop(1,    `${color}00`);
 
                     ctx.globalAlpha = alpha;
                     ctx.strokeStyle = gradient;
-
-                    // Thicker connections for far neurons
-                    const lineWidth = this.layer === 0 ? 3 : this.layer === 1 ? 2 : 1.2;
-                    ctx.lineWidth = lineWidth;
-                    ctx.lineCap = 'round';
+                    ctx.lineWidth   = this.layer === 0 ? 3 : this.layer === 1 ? 2 : 1.2;
+                    ctx.lineCap     = 'round';
 
                     ctx.beginPath();
                     ctx.moveTo(startX, startY);
@@ -176,87 +210,140 @@
             }
 
             draw() {
-                // Draw neuron body with atmospheric glow for far neurons
                 if (this.blur > 0) {
-                    ctx.globalAlpha = this.alpha * 0.2;
-                    ctx.fillStyle = this.color;
-                    ctx.filter = `blur(${this.blur}px)`;
+                    ctx.globalAlpha = this.alpha * this.brightScale * 0.2;
+                    ctx.fillStyle   = this.color;
+                    ctx.filter      = `blur(${this.blur}px)`;
                     ctx.beginPath();
-                    ctx.arc(this.x, this.y, this.size * 2.5, 0, Math.PI * 2);
+                    ctx.arc(this.x, this.y, this.size * this.dragScale * 2.5, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.filter = 'none';
                 }
 
-                // Main neuron body
-                ctx.globalAlpha = this.alpha;
-                ctx.fillStyle = this.color;
+                ctx.globalAlpha = this.alpha * this.brightScale;
+                ctx.fillStyle   = this.color;
                 ctx.beginPath();
-                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.arc(this.x, this.y, this.size * this.dragScale, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Inner core highlight
-                ctx.globalAlpha = this.alpha * 0.6;
-                ctx.fillStyle = '#ffffff';
+                ctx.globalAlpha = this.alpha * this.brightScale * 0.6;
+                ctx.fillStyle   = '#ffffff';
                 ctx.beginPath();
-                ctx.arc(this.x, this.y, this.size * 0.4, 0, Math.PI * 2);
+                ctx.arc(this.x, this.y, this.size * this.dragScale * 0.4, 0, Math.PI * 2);
                 ctx.fill();
             }
         }
 
-        // Create layers of neurons with density-based counts
-        const layers = [[], [], []];
+        // ── Chunk management ────────────────────────────────────────────────
 
-        for (let layer = 0; layer < 3; layer++) {
-            for (let i = 0; i < neuronsPerLayer[layer]; i++) {
-                layers[layer].push(new Neuron(layer));
+        // key "cx,cy" → { neurons: [layer0[], layer1[], layer2[]] }
+        const activeChunks = new Map();
+        let lastChunkKeys  = new Set();
+
+        function generateChunk(cx, cy) {
+            const neurons = [[], [], []];
+            for (let layer = 0; layer < 3; layer++) {
+                const count = Math.max(2, Math.round(NEURONS_PER_CHUNK * layerRatios[layer]));
+                for (let i = 0; i < count; i++) {
+                    const n = new Neuron(layer);
+                    n.baseX = n.x = cx * CHUNK_SIZE + chunkRand(cx, cy, layer, i, 0) * CHUNK_SIZE;
+                    n.baseY = n.y = cy * CHUNK_SIZE + chunkRand(cx, cy, layer, i, 1) * CHUNK_SIZE;
+                    neurons[layer].push(n);
+                }
+            }
+            return { neurons };
+        }
+
+        function setsEqual(a, b) {
+            if (a.size !== b.size) return false;
+            for (const k of a) if (!b.has(k)) return false;
+            return true;
+        }
+
+        function updateChunks(vp) {
+            const buf = 1; // one-chunk border around the visible area
+            const minCX = Math.floor(vp.left   / CHUNK_SIZE) - buf;
+            const maxCX = Math.floor(vp.right  / CHUNK_SIZE) + buf;
+            const minCY = Math.floor(vp.top    / CHUNK_SIZE) - buf;
+            const maxCY = Math.floor(vp.bottom / CHUNK_SIZE) + buf;
+
+            const required = new Set();
+            for (let cx = minCX; cx <= maxCX; cx++)
+                for (let cy = minCY; cy <= maxCY; cy++)
+                    required.add(`${cx},${cy}`);
+
+            // Skip Map mutation if viewport hasn't crossed a chunk boundary
+            if (setsEqual(required, lastChunkKeys)) return;
+            lastChunkKeys = required;
+
+            // Unload chunks that left the visible area
+            for (const key of activeChunks.keys())
+                if (!required.has(key)) activeChunks.delete(key);
+
+            // Load newly visible chunks
+            for (const key of required) {
+                if (!activeChunks.has(key)) {
+                    const [cx, cy] = key.split(',').map(Number);
+                    activeChunks.set(key, generateChunk(cx, cy));
+                }
             }
         }
 
-        // Drag state
+        // ── Hit testing ─────────────────────────────────────────────────────
+
         let draggedNeuron = null;
 
-        // Find neuron under cursor
-        // Priority: core hit (front to back) > halo hit (front to back)
-        function getNeuronAt(x, y) {
-            // First pass: check cores (front layers first)
+        function getNeuronAt(wx, wy) {
+            // Core hit, front layers first
             for (let l = 2; l >= 0; l--) {
-                for (const neuron of layers[l]) {
-                    const dx = neuron.x - x;
-                    const dy = neuron.y - y;
-                    if (dx * dx + dy * dy <= neuron.size * neuron.size) {
-                        return neuron;
+                for (const chunk of activeChunks.values()) {
+                    for (const n of chunk.neurons[l]) {
+                        const dx = n.x - wx, dy = n.y - wy;
+                        if (dx * dx + dy * dy <= n.size * n.size) return n;
                     }
                 }
             }
-            // Second pass: check halos (front layers first)
+            // Halo hit
             for (let l = 2; l >= 0; l--) {
-                for (const neuron of layers[l]) {
-                    const dx = neuron.x - x;
-                    const dy = neuron.y - y;
-                    const haloRadius = neuron.blur > 0 ? neuron.size * 2.5 : neuron.size;
-                    if (dx * dx + dy * dy <= haloRadius * haloRadius) {
-                        return neuron;
+                for (const chunk of activeChunks.values()) {
+                    for (const n of chunk.neurons[l]) {
+                        const dx = n.x - wx, dy = n.y - wy;
+                        const r = n.blur > 0 ? n.size * 2.5 : n.size;
+                        if (dx * dx + dy * dy <= r * r) return n;
                     }
                 }
             }
             return null;
         }
 
-        // Mouse tracking
+        // ── Input handlers ──────────────────────────────────────────────────
+
         window.addEventListener('mousemove', (e) => {
-            mouse.x = e.clientX;
-            mouse.y = e.clientY;
-            if (draggedNeuron) {
-                draggedNeuron.x = e.clientX;
-                draggedNeuron.y = e.clientY;
+            if (isPanning) {
+                // Shift camera; world-mouse stays frozen so neurons don't scatter
+                camera.x = panOrigin.x + (e.clientX - panStart.x);
+                camera.y = panOrigin.y + (e.clientY - panStart.y);
+            } else {
+                const w = screenToWorld(e.clientX, e.clientY);
+                mouse.x = w.x;
+                mouse.y = w.y;
+                if (draggedNeuron) {
+                    draggedNeuron.x = w.x;
+                    draggedNeuron.y = w.y;
+                }
             }
         });
 
         window.addEventListener('mousedown', (e) => {
-            const neuron = getNeuronAt(e.clientX, e.clientY);
+            const w = screenToWorld(e.clientX, e.clientY);
+            const neuron = getNeuronAt(w.x, w.y);
             if (neuron) {
                 draggedNeuron = neuron;
-                draggedNeuron.hidden = true;
+                canvas.style.cursor = 'none';
+            } else {
+                isPanning = true;
+                panStart  = { x: e.clientX, y: e.clientY };
+                panOrigin = { x: camera.x,  y: camera.y  };
             }
         });
 
@@ -266,51 +353,109 @@
                 draggedNeuron.baseY = draggedNeuron.y;
                 draggedNeuron.vx = 0;
                 draggedNeuron.vy = 0;
-                draggedNeuron.hidden = false;
                 draggedNeuron = null;
             }
+            isPanning = false;
+            canvas.style.cursor = customCursor;
         });
 
-        // Handle resize - just update canvas, neurons are pre-generated for full screen
+        function applyZoom(factor, cx, cy) {
+            const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, camera.zoom * factor));
+            const wx = (cx - camera.x) / camera.zoom;
+            const wy = (cy - camera.y) / camera.zoom;
+            camera.zoom = newZoom;
+            camera.x = cx - wx * camera.zoom;
+            camera.y = cy - wy * camera.zoom;
+        }
+
+        window.addEventListener('wheel', (e) => {
+            e.preventDefault();
+
+            if (e.ctrlKey) {
+                // Pinch gesture on touchpad (browser sets ctrlKey for pinch)
+                const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+                applyZoom(factor, e.clientX, e.clientY);
+                return;
+            }
+
+            // Distinguish mouse wheel from touchpad two-finger swipe.
+            // Mouse wheel on Windows: deltaX === 0, |deltaY| is typically 100–120 per notch.
+            // Precision touchpad swipe: small fractional pixel values, often has deltaX.
+            const isMouseWheel = e.deltaMode !== 0 ||
+                                 (e.deltaX === 0 && Math.abs(e.deltaY) >= 40);
+
+            if (isMouseWheel) {
+                const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+                applyZoom(factor, e.clientX, e.clientY);
+            } else {
+                // Touchpad two-finger swipe → pan
+                camera.x -= e.deltaX;
+                camera.y -= e.deltaY;
+            }
+        }, { passive: false });
+
         window.addEventListener('resize', () => {
-            width = canvas.width = window.innerWidth;
+            width  = canvas.width  = window.innerWidth;
             height = canvas.height = window.innerHeight;
         });
 
-        // Animation loop with dynamic connections
+        // ── Render loop ─────────────────────────────────────────────────────
+
         function animate() {
+            // 1. Clear with identity transform
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.fillStyle = colors.bg;
             ctx.fillRect(0, 0, width, height);
 
-            // Draw layers from back to front (0 = far/large, 2 = near/small)
-            [0, 1, 2].forEach(layerIndex => {
+            // 2. Apply camera — everything drawn after this is in world space
+            ctx.setTransform(camera.zoom, 0, 0, camera.zoom, camera.x, camera.y);
+
+            const vp = getViewport();
+
+            // 3. Load/unload chunks based on current viewport
+            updateChunks(vp);
+
+            // 4. Collect neurons from all active chunks into per-layer arrays
+            const allNeurons = [[], [], []];
+            for (const chunk of activeChunks.values())
+                for (let l = 0; l < 3; l++)
+                    for (const n of chunk.neurons[l])
+                        allNeurons[l].push(n);
+
+            // 5. Update, connect, draw — layer by layer (back → front)
+            for (let layerIndex = 0; layerIndex < 3; layerIndex++) {
                 ctx.filter = 'none';
-                const layer = layers[layerIndex];
+                const layer = allNeurons[layerIndex];
 
-                // Update all neurons first (skip dragged neuron)
-                layer.forEach(neuron => {
-                    if (neuron !== draggedNeuron) neuron.update();
-                });
+                // Physics (skip mouse repulsion while panning)
+                for (const neuron of layer) {
+                    if (neuron !== draggedNeuron) neuron.update(isPanning);
+                }
 
-                // Dynamic connections - check all pairs in this layer
+                // Inflate dragged neuron
+                if (draggedNeuron && draggedNeuron.layer === layerIndex) {
+                    draggedNeuron.dragScale  += (1.07 - draggedNeuron.dragScale)  * 0.1;
+                    draggedNeuron.brightScale += (1.1  - draggedNeuron.brightScale) * 0.1;
+                }
+
+                // Connections — skip pair if both endpoints are off-screen
                 for (let i = 0; i < layer.length; i++) {
                     for (let j = i + 1; j < layer.length; j++) {
-                        const neuron = layer[i];
-                        const other = layer[j];
-                        if (neuron.hidden || other.hidden) continue;
-                        const dist = Math.sqrt(
-                            (neuron.x - other.x) ** 2 + (neuron.y - other.y) ** 2
-                        );
-                        if (dist < neuron.maxConnectionDist) {
-                            neuron.drawConnectionTo(other);
-                        }
+                        const a = layer[i], b = layer[j];
+                        if (!a.isInViewport(vp) && !b.isInViewport(vp)) continue;
+                        const dist = Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+                        if (dist < a.maxConnectionDist) a.drawConnectionTo(b);
                     }
                 }
 
-                // Draw all neuron bodies (skip hidden/dragged)
-                layer.forEach(neuron => { if (!neuron.hidden) neuron.draw(); });
-            });
+                // Draw neurons — skip if outside viewport
+                for (const neuron of layer) {
+                    if (neuron.isInViewport(vp)) neuron.draw();
+                }
+            }
 
+            // 6. Reset transform for any future HUD / UI elements
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.filter = 'none';
             ctx.globalAlpha = 1;
 
