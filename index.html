@@ -440,6 +440,117 @@
             document.documentElement.style.cursor = customCursor;
         });
 
+        // ── Touch handling ──────────────────────────────────────────────────
+        // Mirrors the mouse/wheel behaviour exactly:
+        //   1 finger  → pan canvas  (or drag neuron if starting on one)
+        //   2 fingers → pinch-zoom + pan simultaneously, in one transform step
+
+        const _touch = { activeTouches: 0, prevMid: null, prevDist: 0 };
+
+        function _touchMidDist(t1, t2) {
+            const mx = (t1.clientX + t2.clientX) * 0.5;
+            const my = (t1.clientY + t2.clientY) * 0.5;
+            const dx = t1.clientX - t2.clientX;
+            const dy = t1.clientY - t2.clientY;
+            return { mx, my, dist: Math.sqrt(dx * dx + dy * dy) };
+        }
+
+        function _releaseDraggedNeuron() {
+            if (!draggedNeuron) return;
+            draggedNeuron.baseX = draggedNeuron.x;
+            draggedNeuron.baseY = draggedNeuron.y;
+            draggedNeuron.vx = draggedNeuron.vy = 0;
+            draggedNeuron = null;
+        }
+
+        window.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            _touch.activeTouches = e.touches.length;
+
+            if (e.touches.length === 1) {
+                const t = e.touches[0];
+                const w = screenToWorld(t.clientX, t.clientY);
+                mouse.x = w.x;
+                mouse.y = w.y;
+                const neuron = getNeuronAt(w.x, w.y);
+                if (neuron) {
+                    draggedNeuron = neuron;
+                } else {
+                    isPanning = true;
+                    panStart  = { x: t.clientX, y: t.clientY };
+                    panOrigin = { x: camera.x,  y: camera.y  };
+                }
+            } else if (e.touches.length === 2) {
+                // Second finger lands — cancel any single-touch op cleanly
+                _releaseDraggedNeuron();
+                isPanning = false;
+                const { mx, my, dist } = _touchMidDist(e.touches[0], e.touches[1]);
+                _touch.prevMid  = { x: mx, y: my };
+                _touch.prevDist = dist;
+            }
+        }, { passive: false });
+
+        window.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+
+            if (e.touches.length === 1 && _touch.activeTouches === 1) {
+                const t = e.touches[0];
+                const w = screenToWorld(t.clientX, t.clientY);
+                mouse.x = w.x;
+                mouse.y = w.y;
+                if (draggedNeuron) {
+                    draggedNeuron.x = w.x;
+                    draggedNeuron.y = w.y;
+                } else if (isPanning) {
+                    camera.x = panOrigin.x + (t.clientX - panStart.x);
+                    camera.y = panOrigin.y + (t.clientY - panStart.y);
+                }
+
+            } else if (e.touches.length === 2 && _touch.prevMid) {
+                const { mx, my, dist } = _touchMidDist(e.touches[0], e.touches[1]);
+
+                // Combined pinch+pan in a single transform:
+                // anchor the world point under the OLD midpoint to the NEW midpoint.
+                // This handles both zoom and translate with no drift.
+                const factor  = dist / _touch.prevDist;
+                const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, camera.zoom * factor));
+                const wx = (_touch.prevMid.x - camera.x) / camera.zoom;
+                const wy = (_touch.prevMid.y - camera.y) / camera.zoom;
+                camera.zoom = newZoom;
+                camera.x    = mx - wx * camera.zoom;
+                camera.y    = my - wy * camera.zoom;
+
+                _touch.prevMid  = { x: mx, y: my };
+                _touch.prevDist = dist;
+            }
+        }, { passive: false });
+
+        function _onTouchEnd(e) {
+            e.preventDefault();
+            _touch.activeTouches = e.touches.length;
+
+            if (e.touches.length < 2) {
+                _touch.prevMid  = null;
+                _touch.prevDist = 0;
+            }
+
+            if (e.touches.length === 0) {
+                _releaseDraggedNeuron();
+                isPanning = false;
+            } else if (e.touches.length === 1) {
+                // One finger remains after lifting second — restart single-touch pan
+                isPanning = false;
+                if (!draggedNeuron) {
+                    isPanning = true;
+                    panStart  = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                    panOrigin = { x: camera.x, y: camera.y };
+                }
+            }
+        }
+
+        window.addEventListener('touchend',    _onTouchEnd, { passive: false });
+        window.addEventListener('touchcancel', _onTouchEnd, { passive: false });
+
         function applyZoom(factor, cx, cy) {
             const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, camera.zoom * factor));
             const wx = (cx - camera.x) / camera.zoom;
