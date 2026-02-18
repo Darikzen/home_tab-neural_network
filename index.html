@@ -80,15 +80,11 @@
         };
 
         // ── Spatial chunking ────────────────────────────────────────────────
-        // World is divided into CHUNK_SIZE × CHUNK_SIZE cells.
-        // Each cell generates neurons deterministically via a seeded hash,
-        // so the network looks the same whenever you revisit a region.
-
-        const DENSITY    = 55;   // neurons per million world-pixels (matches original)
-        const CHUNK_SIZE = 600;  // world units; > maxConnectionDist so edges connect naturally
+        const DENSITY    = 55;
+        const CHUNK_SIZE = 600;
         const NEURONS_PER_CHUNK = Math.max(4, Math.round(DENSITY * (CHUNK_SIZE * CHUNK_SIZE) / 1_000_000));
 
-        const layerRatios = [0.19, 0.33, 0.48]; // back → front
+        const layerRatios = [0.19, 0.33, 0.48];
 
         // Deterministic hash: maps (chunk coords + layer + index + field) → [0, 1)
         function chunkRand(cx, cy, layer, i, field) {
@@ -112,10 +108,17 @@
                 const reversedLayer = 2 - layer;
                 this.size         = 8 + (reversedLayer * 6);
                 this.maxSpeed     = 0.3 + (layer * 0.2);
+                this.maxSpeedSq   = this.maxSpeed * this.maxSpeed;  // OPT: avoid sqrt in common case
                 this.returnForce  = 0.015 + (layer * 0.01);
                 this.repelRadius  = 80 + (layer * 40);
+                this.repelRadiusSq = this.repelRadius * this.repelRadius; // OPT: squared for guard check
                 this.repelForce   = 1.5 + (layer * 0.8);
-                this.maxConnectionDist = layer === 0 ? 300 : layer === 1 ? 250 : 200;
+
+                // Inner draw threshold (actual line alpha fade distance)
+                this.maxDrawDist    = layer === 0 ? 250 : layer === 1 ? 200 : 150;
+                this.maxDrawDistSq  = this.maxDrawDist * this.maxDrawDist;
+                // Outer cull threshold (skip pair if further than this)
+                this.maxConnectionDistSq = (layer === 0 ? 300 : layer === 1 ? 250 : 200) ** 2;
 
                 if (layer === 0) {
                     this.color = colors.neuronLight;
@@ -137,8 +140,10 @@
                 if (!skipRepel) {
                     const dx = this.x - mouse.x;
                     const dy = this.y - mouse.y;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-                    if (dist < this.repelRadius && dist > 0) {
+                    // OPT: squared guard avoids sqrt for the ~95% of neurons outside repel radius
+                    const distSq = dx * dx + dy * dy;
+                    if (distSq < this.repelRadiusSq && distSq > 0) {
+                        const dist  = Math.sqrt(distSq);
                         const force = (1 - dist / this.repelRadius) * this.repelForce;
                         this.vx += (dx / dist) * force;
                         this.vy += (dy / dist) * force;
@@ -153,8 +158,10 @@
                 this.vx *= 0.92;
                 this.vy *= 0.92;
 
-                const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
-                if (speed > this.maxSpeed) {
+                // OPT: squared guard avoids sqrt when already within speed limit
+                const speedSq = this.vx * this.vx + this.vy * this.vy;
+                if (speedSq > this.maxSpeedSq) {
+                    const speed = Math.sqrt(speedSq);
                     this.vx = (this.vx / speed) * this.maxSpeed;
                     this.vy = (this.vy / speed) * this.maxSpeed;
                 }
@@ -173,51 +180,49 @@
                        this.y + r > vp.top  && this.y - r < vp.bottom;
             }
 
-            drawConnectionTo(other) {
-                const dx = this.x - other.x;
-                const dy = this.y - other.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                const maxDist = this.layer === 0 ? 250 : this.layer === 1 ? 200 : 150;
+            // dist is passed in from the outer loop (already computed, sqrt already taken)
+            drawConnectionTo(other, dist) {
+                if (dist >= this.maxDrawDist) return;
 
-                if (dist < maxDist && dist > 0) {
-                    const alpha = (1 - dist / maxDist) * this.alpha * 0.3;
-                    const angle = Math.atan2(other.y - this.y, other.x - this.x);
-                    const startX = this.x + Math.cos(angle) * this.size * this.dragScale;
-                    const startY = this.y + Math.sin(angle) * this.size * this.dragScale;
-                    const endX   = other.x - Math.cos(angle) * other.size * other.dragScale;
-                    const endY   = other.y - Math.sin(angle) * other.size * other.dragScale;
+                const alpha = (1 - dist / this.maxDrawDist) * this.alpha * 0.3;
+                const angle  = Math.atan2(other.y - this.y, other.x - this.x);
+                const startX = this.x  + Math.cos(angle) * this.size  * this.dragScale;
+                const startY = this.y  + Math.sin(angle) * this.size  * this.dragScale;
+                const endX   = other.x - Math.cos(angle) * other.size * other.dragScale;
+                const endY   = other.y - Math.sin(angle) * other.size * other.dragScale;
 
-                    const midX = (startX + endX) / 2 + (Math.random() - 0.5) * 20;
-                    const midY = (startY + endY) / 2 + (Math.random() - 0.5) * 20;
+                const midX = (startX + endX) / 2 + (Math.random() - 0.5) * 20;
+                const midY = (startY + endY) / 2 + (Math.random() - 0.5) * 20;
 
-                    const gradient = ctx.createLinearGradient(startX, startY, endX, endY);
-                    const color = this.color;
-                    gradient.addColorStop(0,    `${color}00`);
-                    gradient.addColorStop(0.15, color);
-                    gradient.addColorStop(0.85, color);
-                    gradient.addColorStop(1,    `${color}00`);
+                // OPT: solid stroke + globalAlpha instead of createLinearGradient per frame.
+                // Visually near-identical at these low alpha values; eliminates gradient
+                // object allocation and GPU gradient pipeline per connection.
+                ctx.globalAlpha = alpha;
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth   = this.layer === 0 ? 3 : this.layer === 1 ? 2 : 1.2;
+                ctx.lineCap     = 'round';
 
-                    ctx.globalAlpha = alpha;
-                    ctx.strokeStyle = gradient;
-                    ctx.lineWidth   = this.layer === 0 ? 3 : this.layer === 1 ? 2 : 1.2;
-                    ctx.lineCap     = 'round';
-
-                    ctx.beginPath();
-                    ctx.moveTo(startX, startY);
-                    ctx.quadraticCurveTo(midX, midY, endX, endY);
-                    ctx.stroke();
-                }
+                ctx.beginPath();
+                ctx.moveTo(startX, startY);
+                ctx.quadraticCurveTo(midX, midY, endX, endY);
+                ctx.stroke();
             }
 
             draw() {
+                // OPT: radial gradient replaces ctx.filter='blur(Xpx)'.
+                // filter changes flush the entire canvas rasterizer; createRadialGradient
+                // for ~5 neurons/frame is far cheaper.
                 if (this.blur > 0) {
+                    const r    = this.size * this.dragScale * 2.5 + this.blur * 1.5;
+                    const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, r);
+                    grad.addColorStop(0,   this.color);
+                    grad.addColorStop(0.4, this.color);
+                    grad.addColorStop(1,   this.color + '00');
                     ctx.globalAlpha = this.alpha * this.brightScale * 0.2;
-                    ctx.fillStyle   = this.color;
-                    ctx.filter      = `blur(${this.blur}px)`;
+                    ctx.fillStyle   = grad;
                     ctx.beginPath();
-                    ctx.arc(this.x, this.y, this.size * this.dragScale * 2.5, 0, Math.PI * 2);
+                    ctx.arc(this.x, this.y, r, 0, Math.PI * 2);
                     ctx.fill();
-                    ctx.filter = 'none';
                 }
 
                 ctx.globalAlpha = this.alpha * this.brightScale;
@@ -236,9 +241,13 @@
 
         // ── Chunk management ────────────────────────────────────────────────
 
-        // key "cx,cy" → { neurons: [layer0[], layer1[], layer2[]] }
         const activeChunks = new Map();
         let lastChunkKeys  = new Set();
+
+        // OPT: cached per-layer neuron arrays — only rebuilt when chunks change,
+        // not every frame. Eliminates 3 array allocations + N push() calls/frame.
+        const neuronsCache  = [[], [], []];
+        let   cacheValid    = false;
 
         function generateChunk(cx, cy) {
             const neurons = [[], [], []];
@@ -261,7 +270,7 @@
         }
 
         function updateChunks(vp) {
-            const buf = 1; // one-chunk border around the visible area
+            const buf = 1;
             const minCX = Math.floor(vp.left   / CHUNK_SIZE) - buf;
             const maxCX = Math.floor(vp.right  / CHUNK_SIZE) + buf;
             const minCY = Math.floor(vp.top    / CHUNK_SIZE) - buf;
@@ -272,15 +281,13 @@
                 for (let cy = minCY; cy <= maxCY; cy++)
                     required.add(`${cx},${cy}`);
 
-            // Skip Map mutation if viewport hasn't crossed a chunk boundary
             if (setsEqual(required, lastChunkKeys)) return;
             lastChunkKeys = required;
+            cacheValid = false; // chunks changed → rebuild neuron cache next frame
 
-            // Unload chunks that left the visible area
             for (const key of activeChunks.keys())
                 if (!required.has(key)) activeChunks.delete(key);
 
-            // Load newly visible chunks
             for (const key of required) {
                 if (!activeChunks.has(key)) {
                     const [cx, cy] = key.split(',').map(Number);
@@ -294,7 +301,6 @@
         let draggedNeuron = null;
 
         function getNeuronAt(wx, wy) {
-            // Core hit, front layers first
             for (let l = 2; l >= 0; l--) {
                 for (const chunk of activeChunks.values()) {
                     for (const n of chunk.neurons[l]) {
@@ -303,7 +309,6 @@
                     }
                 }
             }
-            // Halo hit
             for (let l = 2; l >= 0; l--) {
                 for (const chunk of activeChunks.values()) {
                     for (const n of chunk.neurons[l]) {
@@ -320,7 +325,6 @@
 
         window.addEventListener('mousemove', (e) => {
             if (isPanning) {
-                // Shift camera; world-mouse stays frozen so neurons don't scatter
                 camera.x = panOrigin.x + (e.clientX - panStart.x);
                 camera.y = panOrigin.y + (e.clientY - panStart.y);
             } else {
@@ -372,15 +376,11 @@
             e.preventDefault();
 
             if (e.ctrlKey) {
-                // Pinch gesture on touchpad (browser sets ctrlKey for pinch)
                 const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
                 applyZoom(factor, e.clientX, e.clientY);
                 return;
             }
 
-            // Distinguish mouse wheel from touchpad two-finger swipe.
-            // Mouse wheel on Windows: deltaX === 0, |deltaY| is typically 100–120 per notch.
-            // Precision touchpad swipe: small fractional pixel values, often has deltaX.
             const isMouseWheel = e.deltaMode !== 0 ||
                                  (e.deltaX === 0 && Math.abs(e.deltaY) >= 40);
 
@@ -388,7 +388,6 @@
                 const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
                 applyZoom(factor, e.clientX, e.clientY);
             } else {
-                // Touchpad two-finger swipe → pan
                 camera.x -= e.deltaX;
                 camera.y -= e.deltaY;
             }
@@ -402,34 +401,41 @@
         // ── Render loop ─────────────────────────────────────────────────────
 
         function animate() {
-            // 1. Clear with identity transform
+            // 1. Clear
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.fillStyle = colors.bg;
             ctx.fillRect(0, 0, width, height);
 
-            // 2. Apply camera — everything drawn after this is in world space
+            // 2. Apply camera transform
             ctx.setTransform(camera.zoom, 0, 0, camera.zoom, camera.x, camera.y);
 
             const vp = getViewport();
 
-            // 3. Load/unload chunks based on current viewport
+            // 3. Load/unload chunks
             updateChunks(vp);
 
-            // 4. Collect neurons from all active chunks into per-layer arrays
-            const allNeurons = [[], [], []];
-            for (const chunk of activeChunks.values())
-                for (let l = 0; l < 3; l++)
-                    for (const n of chunk.neurons[l])
-                        allNeurons[l].push(n);
+            // 4. OPT: rebuild neuron cache only when chunks changed, not every frame
+            if (!cacheValid) {
+                neuronsCache[0].length = 0;
+                neuronsCache[1].length = 0;
+                neuronsCache[2].length = 0;
+                for (const chunk of activeChunks.values())
+                    for (let l = 0; l < 3; l++)
+                        for (const n of chunk.neurons[l])
+                            neuronsCache[l].push(n);
+                cacheValid = true;
+            }
 
             // 5. Update, connect, draw — layer by layer (back → front)
             for (let layerIndex = 0; layerIndex < 3; layerIndex++) {
                 ctx.filter = 'none';
-                const layer = allNeurons[layerIndex];
+                const layer = neuronsCache[layerIndex];
 
-                // Physics (skip mouse repulsion while panning)
+                // OPT: physics only for visible neurons — off-screen ones are at rest
+                // (return force settles them fast when they re-enter view)
                 for (const neuron of layer) {
-                    if (neuron !== draggedNeuron) neuron.update(isPanning);
+                    if (neuron !== draggedNeuron && neuron.isInViewport(vp))
+                        neuron.update(isPanning);
                 }
 
                 // Inflate dragged neuron
@@ -438,13 +444,18 @@
                     draggedNeuron.brightScale += (1.1  - draggedNeuron.brightScale) * 0.1;
                 }
 
-                // Connections — skip pair if both endpoints are off-screen
+                // Connections — OPT: squared distance check avoids sqrt for most pairs;
+                // sqrt only taken for the subset that actually gets drawn
                 for (let i = 0; i < layer.length; i++) {
+                    const a = layer[i];
+                    if (!a.isInViewport(vp)) continue; // skip entirely off-screen neurons
                     for (let j = i + 1; j < layer.length; j++) {
-                        const a = layer[i], b = layer[j];
-                        if (!a.isInViewport(vp) && !b.isInViewport(vp)) continue;
-                        const dist = Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
-                        if (dist < a.maxConnectionDist) a.drawConnectionTo(b);
+                        const b = layer[j];
+                        const dx = a.x - b.x, dy = a.y - b.y;
+                        const distSq = dx * dx + dy * dy;
+                        if (distSq >= a.maxConnectionDistSq) continue;
+                        if (!b.isInViewport(vp)) continue; // skip if other end is off-screen
+                        a.drawConnectionTo(b, Math.sqrt(distSq));
                     }
                 }
 
@@ -454,7 +465,7 @@
                 }
             }
 
-            // 6. Reset transform for any future HUD / UI elements
+            // 6. Reset
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.filter = 'none';
             ctx.globalAlpha = 1;
