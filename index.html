@@ -23,10 +23,29 @@
             top: 0;
             left: 0;
         }
+
+        #seedLabel {
+            position: fixed;
+            top: 8px;
+            left: 8px;
+            font-family: ui-monospace, 'Cascadia Mono', 'Cascadia Code', 'Courier New', monospace;
+            font-size: 18pt;
+            letter-spacing: 0.08em;
+            color: #ffffff;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+            user-select: none;
+            z-index: 10;
+        }
+
+        #seedLabel:hover {
+            opacity: 0.5;
+        }
     </style>
 </head>
 <body>
     <canvas id="neuralCanvas"></canvas>
+    <div id="seedLabel"></div>
 
     <script>
         const canvas = document.getElementById('neuralCanvas');
@@ -88,6 +107,8 @@
 
         // Random once per page load — makes every session look different
         const SESSION_SEED = (Math.random() * 0xFFFFFF) | 0;
+        document.getElementById('seedLabel').textContent =
+            SESSION_SEED.toString(16).toUpperCase().padStart(6, '0');
 
         // Deterministic hash: maps (chunk coords + layer + index + field) → [0, 1)
         function chunkRand(cx, cy, layer, i, field) {
