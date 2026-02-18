@@ -35,17 +35,35 @@
             opacity: 0;
             transition: opacity 0.5s ease;
             user-select: none;
+            cursor: inherit;
             z-index: 10;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         #seedLabel:hover {
             opacity: 0.5;
         }
+
+        #copyIcon {
+            opacity: 0;
+            display: flex;
+            align-items: center;
+        }
     </style>
 </head>
 <body>
     <canvas id="neuralCanvas"></canvas>
-    <div id="seedLabel"></div>
+    <div id="seedLabel">
+        <span id="seedText"></span>
+        <span id="copyIcon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
+            </svg>
+        </span>
+    </div>
 
     <script>
         const canvas = document.getElementById('neuralCanvas');
@@ -54,7 +72,7 @@
         // Custom crosshair: 4 short lines, empty center, neuron-halo gray
         const _cursorSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><line x1="16" y1="3" x2="16" y2="11" stroke="#BDBDBD" stroke-width="1.5" stroke-linecap="round" opacity="0.75"/><line x1="16" y1="21" x2="16" y2="29" stroke="#BDBDBD" stroke-width="1.5" stroke-linecap="round" opacity="0.75"/><line x1="3" y1="16" x2="11" y2="16" stroke="#BDBDBD" stroke-width="1.5" stroke-linecap="round" opacity="0.75"/><line x1="21" y1="16" x2="29" y2="16" stroke="#BDBDBD" stroke-width="1.5" stroke-linecap="round" opacity="0.75"/></svg>`;
         const customCursor = `url("data:image/svg+xml,${encodeURIComponent(_cursorSVG)}") 16 16, crosshair`;
-        canvas.style.cursor = customCursor;
+        document.documentElement.style.cursor = customCursor;
 
         let width = canvas.width = window.innerWidth;
         let height = canvas.height = window.innerHeight;
@@ -107,8 +125,23 @@
 
         // Random once per page load — makes every session look different
         const SESSION_SEED = (Math.random() * 0xFFFFFF) | 0;
-        document.getElementById('seedLabel').textContent =
-            SESSION_SEED.toString(16).toUpperCase().padStart(6, '0');
+        const _seedHex = SESSION_SEED.toString(16).toUpperCase().padStart(6, '0');
+        document.getElementById('seedText').textContent = _seedHex;
+
+        // Copy seed to clipboard on click; briefly show the copy icon
+        document.getElementById('seedLabel').addEventListener('click', () => {
+            navigator.clipboard?.writeText(_seedHex);
+            const icon = document.getElementById('copyIcon');
+            // Fast fade in
+            icon.style.transition = 'opacity 0.15s ease';
+            icon.style.opacity    = '1';
+            // Slow fade out — twice the label's 0.5s transition
+            clearTimeout(icon._fadeTimer);
+            icon._fadeTimer = setTimeout(() => {
+                icon.style.transition = 'opacity 1.0s ease';
+                icon.style.opacity    = '0';
+            }, 600);
+        });
 
         // Deterministic hash: maps (chunk coords + layer + index + field) → [0, 1)
         function chunkRand(cx, cy, layer, i, field) {
@@ -387,7 +420,7 @@
             const neuron = getNeuronAt(w.x, w.y);
             if (neuron) {
                 draggedNeuron = neuron;
-                canvas.style.cursor = 'none';
+                document.documentElement.style.cursor = 'none';
             } else {
                 isPanning = true;
                 panStart  = { x: e.clientX, y: e.clientY };
@@ -404,7 +437,7 @@
                 draggedNeuron = null;
             }
             isPanning = false;
-            canvas.style.cursor = customCursor;
+            document.documentElement.style.cursor = customCursor;
         });
 
         function applyZoom(factor, cx, cy) {
