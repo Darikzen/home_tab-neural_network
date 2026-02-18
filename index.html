@@ -22,6 +22,7 @@
             position: absolute;
             top: 0;
             left: 0;
+            cursor: crosshair;
         }
     </style>
 </head>
@@ -211,10 +212,63 @@
             }
         }
 
+        // Drag state
+        let draggedNeuron = null;
+
+        // Find neuron under cursor
+        // Priority: core hit (front to back) > halo hit (front to back)
+        function getNeuronAt(x, y) {
+            // First pass: check cores (front layers first)
+            for (let l = 2; l >= 0; l--) {
+                for (const neuron of layers[l]) {
+                    const dx = neuron.x - x;
+                    const dy = neuron.y - y;
+                    if (dx * dx + dy * dy <= neuron.size * neuron.size) {
+                        return neuron;
+                    }
+                }
+            }
+            // Second pass: check halos (front layers first)
+            for (let l = 2; l >= 0; l--) {
+                for (const neuron of layers[l]) {
+                    const dx = neuron.x - x;
+                    const dy = neuron.y - y;
+                    const haloRadius = neuron.blur > 0 ? neuron.size * 2.5 : neuron.size;
+                    if (dx * dx + dy * dy <= haloRadius * haloRadius) {
+                        return neuron;
+                    }
+                }
+            }
+            return null;
+        }
+
         // Mouse tracking
         window.addEventListener('mousemove', (e) => {
             mouse.x = e.clientX;
             mouse.y = e.clientY;
+            if (draggedNeuron) {
+                draggedNeuron.x = e.clientX;
+                draggedNeuron.y = e.clientY;
+            }
+        });
+
+        window.addEventListener('mousedown', (e) => {
+            const neuron = getNeuronAt(e.clientX, e.clientY);
+            if (neuron) {
+                draggedNeuron = neuron;
+                draggedNeuron.hidden = true;
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (draggedNeuron) {
+                draggedNeuron.baseX = draggedNeuron.x;
+                draggedNeuron.baseY = draggedNeuron.y;
+                draggedNeuron.vx = 0;
+                draggedNeuron.vy = 0;
+                draggedNeuron.hidden = false;
+                draggedNeuron = null;
+            }
         });
 
         // Handle resize - just update canvas, neurons are pre-generated for full screen
@@ -233,14 +287,17 @@
                 ctx.filter = 'none';
                 const layer = layers[layerIndex];
 
-                // Update all neurons first
-                layer.forEach(neuron => neuron.update());
+                // Update all neurons first (skip dragged neuron)
+                layer.forEach(neuron => {
+                    if (neuron !== draggedNeuron) neuron.update();
+                });
 
                 // Dynamic connections - check all pairs in this layer
                 for (let i = 0; i < layer.length; i++) {
                     for (let j = i + 1; j < layer.length; j++) {
                         const neuron = layer[i];
                         const other = layer[j];
+                        if (neuron.hidden || other.hidden) continue;
                         const dist = Math.sqrt(
                             (neuron.x - other.x) ** 2 + (neuron.y - other.y) ** 2
                         );
@@ -250,8 +307,8 @@
                     }
                 }
 
-                // Draw all neuron bodies
-                layer.forEach(neuron => neuron.draw());
+                // Draw all neuron bodies (skip hidden/dragged)
+                layer.forEach(neuron => { if (!neuron.hidden) neuron.draw(); });
             });
 
             ctx.filter = 'none';
