@@ -109,7 +109,7 @@
         </button>
     </div>
     <div id="coordLabel" class="hudLabel">
-        <input id="coordInput" class="hudInput" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Coordinates" title="Paste or type x, y — Enter to go">
+        <input id="coordInput" class="hudInput" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="View center coordinates" title="View center x, y — paste and Enter to go">
         <button type="button" class="copyBtn" aria-label="Copy coordinates">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
@@ -198,15 +198,22 @@
             if (document.activeElement !== seedInputEl) seedInputEl.value = _seedHex;
         }
 
+        function getViewCenterWorld() {
+            return {
+                x: (width  / 2 - camera.x) / camera.zoom,
+                y: (height / 2 - camera.y) / camera.zoom
+            };
+        }
+
         function updateCoordLabel() {
-            _coordStr = formatCoords(mouse.x, mouse.y);
+            const c = getViewCenterWorld();
+            _coordStr = formatCoords(c.x, c.y);
             if (!_coordInputFocused) coordInputEl.value = _coordStr;
         }
 
         function setMouseWorld(w) {
             mouse.x = w.x;
             mouse.y = w.y;
-            updateCoordLabel();
         }
 
         function resetWorld() {
@@ -243,7 +250,7 @@
         function centerCameraOn(wx, wy) {
             camera.x = width  / 2 - wx * camera.zoom;
             camera.y = height / 2 - wy * camera.zoom;
-            setMouseWorld({ x: wx, y: wy });
+            updateCoordLabel();
         }
 
         function applyCoords() {
