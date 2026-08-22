@@ -1373,15 +1373,20 @@
         }
 
         // Quiet easter-egg layouts — atlas: SEEDS.md (not shown in the UI)
+        // Per-seed knobs keep patterns readable without changing the default field.
         const SPECIAL_LAYOUTS = {
-            0x000000: 'void',
-            0xFFFFFF: 'lattice',
-            0xC0FFEE: 'rings',
-            0x161803: 'phyllotaxis',
-            0xDEC0DE: 'coastline',
-            0x101010: 'bitfield',
-            0xACEACE: 'binarystar'
+            0x000000: { mode: 'void',        density: 2.4, drift: 0.35 },
+            0xFFFFFF: { mode: 'lattice',     density: 1.35, drift: 0.25 },
+            0xC0FFEE: { mode: 'rings',       density: 1.5,  drift: 0.3  },
+            0x161803: { mode: 'phyllotaxis', density: 1.4,  drift: 0.3  },
+            0xDEC0DE: { mode: 'coastline',   density: 2.0,  drift: 0.4  },
+            0x101010: { mode: 'bitfield',    density: 2.2,  drift: 0.2  },
+            0xACEACE: { mode: 'binarystar',  density: 1.5,  drift: 0.35 }
         };
+
+        function layoutConfig() {
+            return SPECIAL_LAYOUTS[SESSION_SEED] || null;
+        }
 
         function worldHash(ix, iy, salt) {
             let s = (Math.imul(ix | 0, 374761393) ^ Math.imul(iy | 0, 668265263) ^
@@ -1397,36 +1402,46 @@
             };
         }
 
-        function insideVoidBubble(wx, wy) {
-            const cell = 780;
+        /** Nearest void-bubble radius test; returns { inside, edgeDist } in world units. */
+        function voidBubbleSample(wx, wy) {
+            const cell = 400;
             const ix = Math.floor(wx / cell);
             const iy = Math.floor(wy / cell);
+            let bestInside = false;
+            let bestEdge = Infinity;
             for (let ox = -1; ox <= 1; ox++) {
                 for (let oy = -1; oy <= 1; oy++) {
                     const bx = ix + ox, by = iy + oy;
                     const jx = worldHash(bx, by, 1);
                     const jy = worldHash(bx, by, 2);
                     const jr = worldHash(bx, by, 3);
-                    const px = (bx + 0.5 + (jx - 0.5) * 0.55) * cell;
-                    const py = (by + 0.5 + (jy - 0.5) * 0.55) * cell;
-                    const r  = cell * (0.28 + jr * 0.22);
-                    const dx = wx - px, dy = wy - py;
-                    if (dx * dx + dy * dy < r * r) return true;
+                    const px = (bx + 0.5 + (jx - 0.5) * 0.4) * cell;
+                    const py = (by + 0.5 + (jy - 0.5) * 0.4) * cell;
+                    const r  = cell * (0.38 + jr * 0.16);
+                    const d  = Math.hypot(wx - px, wy - py);
+                    const edge = d - r;
+                    if (d < r) bestInside = true;
+                    if (Math.abs(edge) < Math.abs(bestEdge)) bestEdge = edge;
                 }
             }
-            return false;
+            return { inside: bestInside, edge: bestEdge };
         }
 
         function placeVoid(cx, cy, layer, i) {
-            for (let a = 0; a < 28; a++) {
+            // Prefer the thin membrane between bubbles so voids read at normal zoom
+            let fallback = null;
+            for (let a = 0; a < 36; a++) {
                 const p = uniformInChunk(cx, cy, layer, i, 20 + a * 2);
-                if (!insideVoidBubble(p.x, p.y)) return p;
+                const s = voidBubbleSample(p.x, p.y);
+                if (s.inside) continue;
+                if (!fallback) fallback = p;
+                if (s.edge >= 0 && s.edge < 55) return p;
             }
-            return uniformInChunk(cx, cy, layer, i, 0);
+            return fallback || uniformInChunk(cx, cy, layer, i, 0);
         }
 
         function placeLattice(cx, cy, layer, i) {
-            const spacing = 48 + layer * 14;
+            const spacing = 42 + layer * 12;
             const rowH = spacing * 0.86602540378;
             const x0 = cx * CHUNK_SIZE;
             const y0 = cy * CHUNK_SIZE;
@@ -1435,7 +1450,7 @@
             const idx = i % (cols * rows);
             const row = Math.floor(idx / cols);
             const col = idx % cols;
-            const jitter = 6;
+            const jitter = 4;
             const ox = (row & 1) * (spacing * 0.5);
             return {
                 x: x0 + col * spacing + ox + (chunkRand(cx, cy, layer, i, 30) - 0.5) * jitter,
@@ -1447,13 +1462,12 @@
             const mx = (cx + 0.5) * CHUNK_SIZE;
             const my = (cy + 0.5) * CHUNK_SIZE;
             const count = Math.max(2, Math.round(NEURONS_PER_CHUNK * layerRatios[layer]));
-            const rings = 3 + layer;
+            const rings = 2 + (layer === 0 ? 1 : 0);
             const ring = i % rings;
             const slots = Math.max(1, Math.ceil(count / rings));
             const slot = Math.floor(i / rings) % slots;
-            const angle = (slot / slots) * Math.PI * 2
-                + chunkRand(cx, cy, layer, i, 40) * 0.15 + layer * 0.4;
-            const r = 55 + ring * (70 - layer * 8) + chunkRand(cx, cy, layer, i, 41) * 12;
+            const angle = (slot / slots) * Math.PI * 2 + layer * 0.25;
+            const r = 90 + ring * 110 + chunkRand(cx, cy, layer, i, 41) * 8;
             return { x: mx + Math.cos(angle) * r, y: my + Math.sin(angle) * r };
         }
 
@@ -1461,17 +1475,17 @@
             const mx = (cx + 0.5) * CHUNK_SIZE;
             const my = (cy + 0.5) * CHUNK_SIZE;
             const golden = Math.PI * (3 - Math.sqrt(5));
-            const k = i + layer * 40;
-            const angle = k * golden;
-            const r = Math.min(12 * Math.sqrt(k + 1) * (1.1 - layer * 0.15), CHUNK_SIZE * 0.48);
+            const k = i + 1;
+            const angle = k * golden + layer * 0.15;
+            const r = Math.min(9 * Math.sqrt(k) * (1.25 - layer * 0.12), CHUNK_SIZE * 0.46);
             return { x: mx + Math.cos(angle) * r, y: my + Math.sin(angle) * r };
         }
 
         function juliaEscape(wx, wy) {
-            let zr = wx * 0.00085, zi = wy * 0.00085;
+            let zr = wx * 0.0011, zi = wy * 0.0011;
             const cr = -0.70176, ci = -0.3842;
             let n = 0;
-            for (; n < 48; n++) {
+            for (; n < 36; n++) {
                 if (zr * zr + zi * zi > 4) break;
                 const nr = zr * zr - zi * zi + cr;
                 zi = 2 * zr * zi + ci;
@@ -1481,8 +1495,8 @@
         }
 
         function placeCoastline(cx, cy, layer, i) {
-            const lo = 12 + layer * 2, hi = 22 + layer * 2;
-            for (let a = 0; a < 32; a++) {
+            const lo = 8 + layer, hi = 18 + layer * 2;
+            for (let a = 0; a < 40; a++) {
                 const p = uniformInChunk(cx, cy, layer, i, 50 + a * 2);
                 const e = juliaEscape(p.x, p.y);
                 if (e >= lo && e <= hi) return p;
@@ -1490,33 +1504,32 @@
             return uniformInChunk(cx, cy, layer, i, 0);
         }
 
+        /** Chunk-scale checker: live chunks packed, dead chunks empty. */
+        function bitfieldChunkLive(cx, cy) {
+            return ((cx + cy) & 1) === 0;
+        }
+
         function placeBitfield(cx, cy, layer, i) {
-            const cell = 160;
-            for (let a = 0; a < 28; a++) {
-                const p = uniformInChunk(cx, cy, layer, i, 60 + a * 2);
-                const ix = Math.floor(p.x / cell);
-                const iy = Math.floor(p.y / cell);
-                if (((ix + iy) & 1) === (layer & 1)) return p;
-            }
-            return uniformInChunk(cx, cy, layer, i, 0);
+            // Fill the live chunk densely (dead chunks spawn nothing via density rules)
+            return uniformInChunk(cx, cy, layer, i, 60);
         }
 
         function placeBinaryStar(cx, cy, layer, i) {
             const mx = (cx + 0.5) * CHUNK_SIZE;
             const my = (cy + 0.5) * CHUNK_SIZE;
             const which = (i + layer) & 1;
-            const ang = which * Math.PI + 0.35;
-            const fx = mx + Math.cos(ang) * 160;
-            const fy = my + Math.sin(ang) * 160;
+            const ang = which * Math.PI + 0.4;
+            const fx = mx + Math.cos(ang) * 130;
+            const fy = my + Math.sin(ang) * 130;
             const a = chunkRand(cx, cy, layer, i, 70) * Math.PI * 2;
-            const r = 20 + chunkRand(cx, cy, layer, i, 71) * 90;
+            const r = 8 + chunkRand(cx, cy, layer, i, 71) * 55;
             return { x: fx + Math.cos(a) * r, y: fy + Math.sin(a) * r };
         }
 
         function placeNeuron(cx, cy, layer, i) {
-            const mode = SPECIAL_LAYOUTS[SESSION_SEED];
-            if (!mode) return uniformInChunk(cx, cy, layer, i, 0);
-            switch (mode) {
+            const cfg = layoutConfig();
+            if (!cfg) return uniformInChunk(cx, cy, layer, i, 0);
+            switch (cfg.mode) {
                 case 'void':        return placeVoid(cx, cy, layer, i);
                 case 'lattice':     return placeLattice(cx, cy, layer, i);
                 case 'rings':       return placeRings(cx, cy, layer, i);
@@ -1526,6 +1539,20 @@
                 case 'binarystar':  return placeBinaryStar(cx, cy, layer, i);
                 default:            return uniformInChunk(cx, cy, layer, i, 0);
             }
+        }
+
+        /** Layer neuron counts for this chunk — special seeds may empty or overload chunks. */
+        function layerNeuronCount(cx, cy, layer) {
+            const cfg = layoutConfig();
+            let scale = 1;
+            const ratios = layerRatios;
+            if (cfg) {
+                scale = cfg.density || 1;
+                if (cfg.mode === 'bitfield' && !bitfieldChunkLive(cx, cy))
+                    return 0;
+            }
+            return Math.max(cfg && cfg.mode === 'bitfield' ? 1 : 2,
+                Math.round(NEURONS_PER_CHUNK * ratios[layer] * scale));
         }
 
         class Neuron {
@@ -1761,24 +1788,23 @@
 
         function generateChunk(cx, cy) {
             const neurons = [[], [], []];
+            const cfg = layoutConfig();
+            const driftMul = cfg && cfg.drift != null ? cfg.drift : 1;
             for (let layer = 0; layer < 3; layer++) {
-                const count = Math.max(2, Math.round(NEURONS_PER_CHUNK * layerRatios[layer]));
+                const count = layerNeuronCount(cx, cy, layer);
                 for (let i = 0; i < count; i++) {
                     const n = new Neuron(layer);
                     const p = placeNeuron(cx, cy, layer, i);
                     n.baseX = n.x = p.x;
                     n.baseY = n.y = p.y;
 
-                    // Drift: each neuron's rest position slowly oscillates so the network
-                    // breathes organically. Background neurons drift more (atmospheric),
-                    // foreground neurons less (anchored). The existing spring returnForce
-                    // chases the moving target — no physics changes needed.
+                    // Drift: structured seeds damp motion so motifs stay readable.
                     n.originX     = n.baseX;
                     n.originY     = n.baseY;
-                    const ampScale = layer === 0 ? 1.8 : layer === 1 ? 1.2 : 0.7;
+                    const ampScale = (layer === 0 ? 1.8 : layer === 1 ? 1.2 : 0.7) * driftMul;
                     n.driftAmpX   = (15 + chunkRand(cx, cy, layer, i, 2) * 35) * ampScale;
                     n.driftAmpY   = (15 + chunkRand(cx, cy, layer, i, 3) * 35) * ampScale;
-                    n.driftFreq   = (0.03 + chunkRand(cx, cy, layer, i, 4) * 0.05) * 0.001; // full cycle ~60–180 s
+                    n.driftFreq   = (0.03 + chunkRand(cx, cy, layer, i, 4) * 0.05) * 0.001;
                     n.driftPhaseX = chunkRand(cx, cy, layer, i, 5) * Math.PI * 2;
                     n.driftPhaseY = chunkRand(cx, cy, layer, i, 6) * Math.PI * 2;
 
