@@ -60,13 +60,6 @@
             gap: 10px;
         }
 
-        .hudActions {
-            display: flex;
-            align-items: center;
-            gap: 2px;
-            flex-shrink: 0;
-        }
-
         .hudInput {
             font: inherit;
             letter-spacing: inherit;
@@ -176,7 +169,6 @@
             min-width: 7em;
         }
 
-        .capacityActions,
         .hudActions {
             display: flex;
             align-items: center;
@@ -272,7 +264,7 @@
     </div>
     <div id="capacityLabel" class="hudLabel hudLabelBottom">
         <span id="capacityText">0%</span>
-        <div class="capacityActions">
+        <div class="hudActions">
             <button type="button" class="hudIconBtn copyBtn" id="capacityCopyBtn" aria-label="Copy share link">
                 <svg class="iconCopy" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                     <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
