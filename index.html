@@ -24,10 +24,9 @@
             left: 0;
         }
 
-        #seedLabel {
+        .hudLabel {
             position: fixed;
             top: 8px;
-            left: 8px;
             font-family: ui-monospace, 'Cascadia Mono', 'Cascadia Code', 'Courier New', monospace;
             font-size: 18pt;
             letter-spacing: 0.08em;
@@ -42,11 +41,19 @@
             gap: 8px;
         }
 
-        #seedLabel:hover {
+        .hudLabel:hover {
             opacity: 0.5;
         }
 
-        #copyIcon {
+        #seedLabel {
+            left: 8px;
+        }
+
+        #coordLabel {
+            right: 8px;
+        }
+
+        .copyIcon {
             opacity: 0;
             display: flex;
             align-items: center;
@@ -55,9 +62,18 @@
 </head>
 <body>
     <canvas id="neuralCanvas"></canvas>
-    <div id="seedLabel">
+    <div id="seedLabel" class="hudLabel">
         <span id="seedText"></span>
-        <span id="copyIcon">
+        <span class="copyIcon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
+            </svg>
+        </span>
+    </div>
+    <div id="coordLabel" class="hudLabel">
+        <span id="coordText"></span>
+        <span class="copyIcon">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
                 <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
@@ -128,20 +144,41 @@
         const _seedHex = SESSION_SEED.toString(16).toUpperCase().padStart(6, '0');
         document.getElementById('seedText').textContent = _seedHex;
 
-        // Copy seed to clipboard on click; briefly show the copy icon
-        document.getElementById('seedLabel').addEventListener('click', () => {
-            navigator.clipboard?.writeText(_seedHex);
-            const icon = document.getElementById('copyIcon');
-            // Fast fade in
-            icon.style.transition = 'opacity 0.15s ease';
-            icon.style.opacity    = '1';
-            // Slow fade out — twice the label's 0.5s transition
-            clearTimeout(icon._fadeTimer);
-            icon._fadeTimer = setTimeout(() => {
-                icon.style.transition = 'opacity 1.0s ease';
-                icon.style.opacity    = '0';
-            }, 600);
-        });
+        const coordTextEl = document.getElementById('coordText');
+        let _coordStr = '0, 0';
+
+        function formatCoords(x, y) {
+            return `${Math.round(x)}, ${Math.round(y)}`;
+        }
+
+        function updateCoordLabel() {
+            _coordStr = formatCoords(mouse.x, mouse.y);
+            coordTextEl.textContent = _coordStr;
+        }
+
+        function setMouseWorld(w) {
+            mouse.x = w.x;
+            mouse.y = w.y;
+            updateCoordLabel();
+        }
+
+        function setupCopyLabel(labelEl, getText) {
+            labelEl.addEventListener('click', () => {
+                navigator.clipboard?.writeText(getText());
+                const icon = labelEl.querySelector('.copyIcon');
+                icon.style.transition = 'opacity 0.15s ease';
+                icon.style.opacity    = '1';
+                clearTimeout(icon._fadeTimer);
+                icon._fadeTimer = setTimeout(() => {
+                    icon.style.transition = 'opacity 1.0s ease';
+                    icon.style.opacity    = '0';
+                }, 600);
+            });
+        }
+
+        setupCopyLabel(document.getElementById('seedLabel'), () => _seedHex);
+        setupCopyLabel(document.getElementById('coordLabel'), () => _coordStr);
+        updateCoordLabel();
 
         // Deterministic hash: maps (chunk coords + layer + index + field) → [0, 1)
         function chunkRand(cx, cy, layer, i, field) {
@@ -418,8 +455,7 @@
                 camera.y = panOrigin.y + (e.clientY - panStart.y);
             } else {
                 const w = screenToWorld(e.clientX, e.clientY);
-                mouse.x = w.x;
-                mouse.y = w.y;
+                setMouseWorld(w);
                 if (draggedNeuron) {
                     draggedNeuron.x = w.x;
                     draggedNeuron.y = w.y;
@@ -477,8 +513,7 @@
             if (e.touches.length === 1) {
                 const t = e.touches[0];
                 const w = screenToWorld(t.clientX, t.clientY);
-                mouse.x = w.x;
-                mouse.y = w.y;
+                setMouseWorld(w);
                 const neuron = getNeuronAt(w.x, w.y);
                 if (neuron) {
                     draggedNeuron = neuron;
@@ -503,8 +538,7 @@
             if (e.touches.length === 1 && _touch.activeTouches === 1) {
                 const t = e.touches[0];
                 const w = screenToWorld(t.clientX, t.clientY);
-                mouse.x = w.x;
-                mouse.y = w.y;
+                setMouseWorld(w);
                 if (draggedNeuron) {
                     draggedNeuron.x = w.x;
                     draggedNeuron.y = w.y;
