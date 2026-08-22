@@ -28,7 +28,7 @@
             position: fixed;
             top: 8px;
             font-family: ui-monospace, 'Cascadia Mono', 'Cascadia Code', 'Courier New', monospace;
-            font-size: 18pt;
+            font-size: clamp(11pt, 2.8vw, 18pt);
             letter-spacing: 0.08em;
             color: #ffffff;
             opacity: 0;
@@ -39,9 +39,11 @@
             display: flex;
             align-items: center;
             gap: 8px;
+            max-width: calc(100vw - 16px);
         }
 
-        .hudLabel:hover {
+        .hudLabel:hover,
+        .hudLabel:focus-within {
             opacity: 0.5;
         }
 
@@ -51,34 +53,69 @@
 
         #coordLabel {
             right: 8px;
+            flex-direction: row-reverse;
         }
 
-        .copyIcon {
-            opacity: 0;
+        .hudInput {
+            font: inherit;
+            letter-spacing: inherit;
+            color: inherit;
+            background: transparent;
+            border: none;
+            outline: none;
+            padding: 0;
+            margin: 0;
+            min-width: 0;
+            cursor: text;
+            user-select: text;
+        }
+
+        #seedInput {
+            width: 6.5em;
+        }
+
+        #coordInput {
+            width: min(9em, 42vw);
+            text-align: right;
+        }
+
+        .copyBtn {
+            flex-shrink: 0;
             display: flex;
             align-items: center;
+            padding: 0;
+            border: none;
+            background: none;
+            color: inherit;
+            cursor: inherit;
+            opacity: 0;
+        }
+
+        .copyBtn.flash {
+            opacity: 1;
+            transition: opacity 0.15s ease;
         }
     </style>
 </head>
 <body>
     <canvas id="neuralCanvas"></canvas>
     <div id="seedLabel" class="hudLabel">
-        <span id="seedText"></span>
-        <span class="copyIcon">
+        <input id="seedInput" class="hudInput" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="7" aria-label="Seed" title="Paste or type hex seed, Enter to apply">
+        <button type="button" class="copyBtn" aria-label="Copy seed">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
                 <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
             </svg>
-        </span>
+        </button>
     </div>
     <div id="coordLabel" class="hudLabel">
-        <span id="coordText"></span>
-        <span class="copyIcon">
+        <input id="coordInput" class="hudInput" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Coordinates" title="Paste or type x, y — Enter to go">
+        <button type="button" class="copyBtn" aria-label="Copy coordinates">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
                 <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
             </svg>
-        </span>
+        </button>
     </div>
 
     <script>
@@ -140,20 +177,30 @@
         const layerRatios = [0.19, 0.33, 0.48];
 
         // Random once per page load — makes every session look different
-        const SESSION_SEED = (Math.random() * 0xFFFFFF) | 0;
-        const _seedHex = SESSION_SEED.toString(16).toUpperCase().padStart(6, '0');
-        document.getElementById('seedText').textContent = _seedHex;
+        let SESSION_SEED = (Math.random() * 0xFFFFFF) | 0;
 
-        const coordTextEl = document.getElementById('coordText');
+        const seedInputEl  = document.getElementById('seedInput');
+        const coordInputEl = document.getElementById('coordInput');
+        let _seedHex = '';
         let _coordStr = '0, 0';
+        let _coordInputFocused = false;
+
+        function formatSeedHex(seed) {
+            return seed.toString(16).toUpperCase().padStart(6, '0');
+        }
 
         function formatCoords(x, y) {
             return `${Math.round(x)}, ${Math.round(y)}`;
         }
 
+        function updateSeedDisplay() {
+            _seedHex = formatSeedHex(SESSION_SEED);
+            if (document.activeElement !== seedInputEl) seedInputEl.value = _seedHex;
+        }
+
         function updateCoordLabel() {
             _coordStr = formatCoords(mouse.x, mouse.y);
-            coordTextEl.textContent = _coordStr;
+            if (!_coordInputFocused) coordInputEl.value = _coordStr;
         }
 
         function setMouseWorld(w) {
@@ -162,22 +209,113 @@
             updateCoordLabel();
         }
 
-        function setupCopyLabel(labelEl, getText) {
-            labelEl.addEventListener('click', () => {
-                navigator.clipboard?.writeText(getText());
-                const icon = labelEl.querySelector('.copyIcon');
-                icon.style.transition = 'opacity 0.15s ease';
-                icon.style.opacity    = '1';
-                clearTimeout(icon._fadeTimer);
-                icon._fadeTimer = setTimeout(() => {
-                    icon.style.transition = 'opacity 1.0s ease';
-                    icon.style.opacity    = '0';
-                }, 600);
+        function resetWorld() {
+            activeChunks.clear();
+            lastChunkKeys = new Set();
+            cacheValid = false;
+            draggedNeuron = null;
+        }
+
+        function parseSeedInput(raw) {
+            const hex = raw.trim().replace(/^#/, '');
+            if (!/^[0-9A-Fa-f]{1,6}$/.test(hex)) return null;
+            return parseInt(hex, 16);
+        }
+
+        function parseCoordInput(raw) {
+            const m = raw.trim().match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/);
+            if (!m) return null;
+            return { x: parseFloat(m[1]), y: parseFloat(m[2]) };
+        }
+
+        function applySeed() {
+            const parsed = parseSeedInput(seedInputEl.value);
+            if (parsed === null) {
+                seedInputEl.value = _seedHex;
+                return false;
+            }
+            SESSION_SEED = parsed;
+            updateSeedDisplay();
+            resetWorld();
+            return true;
+        }
+
+        function centerCameraOn(wx, wy) {
+            camera.x = width  / 2 - wx * camera.zoom;
+            camera.y = height / 2 - wy * camera.zoom;
+            setMouseWorld({ x: wx, y: wy });
+        }
+
+        function applyCoords() {
+            const parsed = parseCoordInput(coordInputEl.value);
+            if (!parsed) {
+                coordInputEl.value = _coordStr;
+                return false;
+            }
+            centerCameraOn(parsed.x, parsed.y);
+            return true;
+        }
+
+        function flashCopyBtn(btn) {
+            btn.classList.add('flash');
+            clearTimeout(btn._fadeTimer);
+            btn._fadeTimer = setTimeout(() => {
+                btn.style.transition = 'opacity 1.0s ease';
+                btn.classList.remove('flash');
+                btn.style.transition = '';
+            }, 600);
+        }
+
+        function setupHudField({ inputEl, copyBtn, onApply, getCopyText }) {
+            let editStart = '';
+
+            copyBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                navigator.clipboard?.writeText(getCopyText());
+                flashCopyBtn(copyBtn);
+            });
+
+            inputEl.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    onApply();
+                    inputEl.blur();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    inputEl.value = getCopyText();
+                    inputEl.blur();
+                }
+            });
+
+            inputEl.addEventListener('focus', () => {
+                editStart = inputEl.value;
+                inputEl.select();
+            });
+
+            inputEl.addEventListener('blur', () => {
+                if (inputEl.value !== editStart) onApply();
+                else inputEl.value = getCopyText();
             });
         }
 
-        setupCopyLabel(document.getElementById('seedLabel'), () => _seedHex);
-        setupCopyLabel(document.getElementById('coordLabel'), () => _coordStr);
+        setupHudField({
+            inputEl: seedInputEl,
+            copyBtn: document.querySelector('#seedLabel .copyBtn'),
+            onApply: applySeed,
+            getCopyText: () => _seedHex
+        });
+
+        setupHudField({
+            inputEl: coordInputEl,
+            copyBtn: document.querySelector('#coordLabel .copyBtn'),
+            onApply: applyCoords,
+            getCopyText: () => _coordStr
+        });
+
+        coordInputEl.addEventListener('focus', () => { _coordInputFocused = true; });
+        coordInputEl.addEventListener('blur',  () => { _coordInputFocused = false; });
+
+        updateSeedDisplay();
         updateCoordLabel();
 
         // Deterministic hash: maps (chunk coords + layer + index + field) → [0, 1)
