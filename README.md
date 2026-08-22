@@ -1,6 +1,6 @@
 # Neural Network Tab
 
-An interactive, infinite neural-field new tab - observe the orbs, drag them, share a link with your freshly built clusters, or archive a full scene.
+An interactive, infinite neural-field new tab - observe the orbs, drag them, share your unique clusters as a link, or archive a full scene.
 
 **Live:** [darikzen.github.io/home_tab-neural_network](https://darikzen.github.io/home_tab-neural_network/)
 
