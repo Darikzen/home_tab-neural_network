@@ -162,11 +162,26 @@
             gap: 10px;
         }
 
+        #capacityEvicted {
+            font-size: 0.82em;
+            color: #757575;
+            opacity: 0;
+            transition: opacity 0.35s ease;
+            user-select: none;
+            pointer-events: none;
+            min-width: 1.5em;
+            text-align: right;
+        }
+
+        #capacityEvicted.show {
+            opacity: 0.65;
+        }
+
         #capacityText {
             cursor: pointer;
             user-select: none;
             text-align: right;
-            min-width: 7em;
+            min-width: 4em;
         }
 
         .hudActions {
@@ -226,7 +241,12 @@
             pointer-events: auto;
         }
 
-        .hudInput::selection {
+        ::selection {
+            background: rgba(189, 189, 189, 0.35);
+            color: #ffffff;
+        }
+
+        ::-moz-selection {
             background: rgba(189, 189, 189, 0.35);
             color: #ffffff;
         }
@@ -263,7 +283,8 @@
         </div>
     </div>
     <div id="capacityLabel" class="hudLabel hudLabelBottom">
-        <span id="capacityText">0%</span>
+        <span id="capacityEvicted" aria-hidden="true"></span>
+        <span id="capacityText">0B</span>
         <div class="hudActions">
             <button type="button" class="hudIconBtn copyBtn" id="capacityCopyBtn" aria-label="Copy share link">
                 <svg class="iconCopy" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -287,7 +308,7 @@
     <div id="sceneInfoPanel" hidden>
         Scene capacity limits how much moved-orb data fits in a share link.
         When full, the least relevant edits are dropped: tiny nudges first, then far from your art cluster, then least recently edited.
-        Click the meter to cycle display: percent, bytes, orb count. Copy icon copies a share URL.
+        Click the meter to cycle bytes and percent. Copy icon copies a share URL.
     </div>
 
     <script>
@@ -349,25 +370,28 @@
         const layerRatios = [0.19, 0.33, 0.48];
 
         // ── Scene persistence & sharing ─────────────────────────────────────
-        const SCENE_MAX_BYTES   = 1800;
-        const SCENE_MAX_ENTRIES = 100;
+        // TEST: caps reduced 10× — revert to 1800 / 100 for production
+        const SCENE_MAX_BYTES   = 180;
         const SCENE_WARN_RATIO  = 0.8;
         const SCENE_STORAGE_KEY = 'neuro-tab-scene-v1';
 
         const sceneOverrides = new Map();
         let _sceneByteSize   = 0;
         let _warnShown       = false;
-        let _capacityMode    = parseInt(sessionStorage.getItem('capacityMode') || '0', 10) % 3;
+        let _capacityMode    = parseInt(sessionStorage.getItem('capacityMode') || '0', 10) % 2;
         let _persistTimer    = null;
         let _urlSyncTimer    = null;
         let _byteSizeTimer   = null;
         let _cachedShareUrl  = '';
 
-        const capacityTextEl = document.getElementById('capacityText');
-        const sceneNoticeEl  = document.getElementById('sceneNotice');
-        const sceneInfoBtn   = document.getElementById('sceneInfoBtn');
-        const sceneInfoPanel = document.getElementById('sceneInfoPanel');
-        let _noticeTimer     = null;
+        const capacityTextEl    = document.getElementById('capacityText');
+        const capacityEvictedEl = document.getElementById('capacityEvicted');
+        const sceneNoticeEl     = document.getElementById('sceneNotice');
+        const sceneInfoBtn      = document.getElementById('sceneInfoBtn');
+        const sceneInfoPanel    = document.getElementById('sceneInfoPanel');
+        let _noticeTimer        = null;
+        let _evictFlashTimer    = null;
+        let _evictFlashCount    = 0;
 
         function neuronKey(cx, cy, layer, i) {
             return `${cx},${cy}:${layer}:${i}`;
@@ -394,11 +418,24 @@
             return disp + dist * 0.002 - o.t * 1e-9;
         }
 
-        function regenChunkAt(cx, cy) {
-            const key = `${cx},${cy}`;
-            if (!activeChunks.has(key)) return;
-            activeChunks.set(key, generateChunk(cx, cy));
-            cacheValid = false;
+        function findNeuronInChunk(cx, cy, layer, i) {
+            const chunk = activeChunks.get(`${cx},${cy}`);
+            if (!chunk) return null;
+            const list = chunk.neurons[layer];
+            if (i < 0 || i >= list.length) return null;
+            return list[i];
+        }
+
+        function releaseOverrideVisual(cx, cy, layer, i) {
+            const n = findNeuronInChunk(cx, cy, layer, i);
+            if (!n) return;
+            const def = defaultNeuronPos(cx, cy, layer, i);
+            n.baseX = n.x = def.x;
+            n.baseY = n.y = def.y;
+            n.originX = def.x;
+            n.originY = def.y;
+            n.vx = n.vy = 0;
+            n.pinned = false;
         }
 
         function evictLeastRelevant() {
@@ -409,10 +446,13 @@
                 if (s < worstScore) { worstScore = s; worstKey = k; }
             }
             if (!worstKey) return false;
-            const [cx, cy] = worstKey.split(':')[0].split(',').map(Number);
+            const parts = worstKey.split(':');
+            const [cx, cy] = parts[0].split(',').map(Number);
+            const layer = Number(parts[1]);
+            const idx = Number(parts[2]);
             sceneOverrides.delete(worstKey);
-            regenChunkAt(cx, cy);
-            showSceneNotice('Least relevant edit removed');
+            releaseOverrideVisual(cx, cy, layer, idx);
+            showEvictionFlash(1);
             return true;
         }
 
@@ -478,20 +518,27 @@
 
         function updateCapacityHud() {
             const ratio = sceneBudgetRatio();
-            const count = sceneOverrides.size;
-            let text;
-            if (_capacityMode === 1)
-                text = `${formatBytes(_sceneByteSize)} / ${formatBytes(SCENE_MAX_BYTES)}`;
-            else if (_capacityMode === 2)
-                text = `${count} / ${SCENE_MAX_ENTRIES}`;
-            else
-                text = `${Math.round(ratio * 100)}%`;
+            const text = _capacityMode === 1
+                ? `${Math.round(ratio * 100)}%`
+                : formatBytes(_sceneByteSize);
 
             capacityTextEl.textContent = text;
             if (ratio >= SCENE_WARN_RATIO && ratio < 1)
                 capacityTextEl.style.color = '#bdbdbd';
             else
                 capacityTextEl.style.color = '#ffffff';
+        }
+
+        function showEvictionFlash(count) {
+            _evictFlashCount += count;
+            capacityEvictedEl.textContent = `−${_evictFlashCount}`;
+            capacityEvictedEl.classList.add('show');
+            clearTimeout(_evictFlashTimer);
+            _evictFlashTimer = setTimeout(() => {
+                capacityEvictedEl.classList.remove('show');
+                _evictFlashCount = 0;
+                capacityEvictedEl.textContent = '';
+            }, 2200);
         }
 
         function showSceneNotice(msg) {
@@ -605,10 +652,6 @@
             const key = neuronKey(cx, cy, l, i);
             const def = defaultNeuronPos(cx, cy, l, i);
             const isNew = !sceneOverrides.has(key);
-
-            if (isNew) {
-                while (sceneOverrides.size >= SCENE_MAX_ENTRIES && evictLeastRelevant()) {}
-            }
 
             sceneOverrides.set(key, { cx, cy, l, i, x, y, ox: def.x, oy: def.y, t: performance.now() });
 
@@ -812,7 +855,7 @@
 
         capacityTextEl.addEventListener('click', (e) => {
             e.preventDefault();
-            _capacityMode = (_capacityMode + 1) % 3;
+            _capacityMode = (_capacityMode + 1) % 2;
             sessionStorage.setItem('capacityMode', String(_capacityMode));
             updateCapacityHud();
         });
