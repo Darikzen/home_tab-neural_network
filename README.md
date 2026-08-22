@@ -10,6 +10,4 @@ An interactive, infinite neural-field new tab - observe the orbs, drag them, sha
 - **Seed** (top-left) and **view center** (top-right) are editable; icons copy
 - **Capacity** (bottom-right): share-link budget (~1.8 KB of orb data). Click to cycle bytes / %
 - **Copy** shares a compressed URL of the current scene
-- **Archive** (checkbox): unlimited edits. Copy becomes **Save** (`.json`); **Import** is in the `?` panel. Leaving archive asks you to save before share limits apply again
-=======
-[Link](https://darikzen.github.io/home_tab-neural_network/)
+- **Archive** (checkbox): unlimited edits. Copy becomes **Save** (`.json`); **Import** is in the `?` panel.
