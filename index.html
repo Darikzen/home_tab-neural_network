@@ -308,9 +308,7 @@
     <div id="sceneNotice" aria-live="polite"></div>
     <div id="sceneInfoPanel" hidden>
         Scene capacity limits how much moved-orb data fits in a share link.
-        Moved orbs glow brighter while you edit them this session (so you can spot what to double-click and reset).
-        Opening a share link keeps placements but does not light up every edit — the composition looks as composed.
-        Double-click a moved orb to reset it (frees capacity; does not count as an auto-removal).
+        Moved orbs glow brighter. Double-click one to reset it (frees capacity; does not count as an auto-removal).
         When full, the least relevant edits are dropped: tiny nudges first, then far from your art cluster, then least recently edited.
         Click the meter to cycle bytes and percent. Copy icon copies a share URL.
     </div>
@@ -387,6 +385,18 @@
         let _urlSyncTimer    = null;
         let _byteSizeTimer   = null;
         let _cachedShareUrl  = '';
+        // Drift clock — shared scenes restore the same ambient phase as when copied
+        let _sceneTimeOrigin = performance.now();
+        let _sceneTimeOffset = 0;
+
+        function sceneNow() {
+            return performance.now() - _sceneTimeOrigin + _sceneTimeOffset;
+        }
+
+        function resetSceneClock(offsetMs) {
+            _sceneTimeOrigin = performance.now();
+            _sceneTimeOffset = typeof offsetMs === 'number' && isFinite(offsetMs) ? offsetMs : 0;
+        }
 
         const capacityTextEl    = document.getElementById('capacityText');
         const capacityEvictedEl = document.getElementById('capacityEvicted');
@@ -440,7 +450,6 @@
             n.originY = def.y;
             n.vx = n.vy = 0;
             n.pinned = false;
-            n.editGlow = false;
         }
 
         function evictLeastRelevant() {
@@ -465,8 +474,15 @@
             const c = getViewCenterWorld();
             const o = [];
             for (const v of sceneOverrides.values())
-                o.push([v.cx, v.cy, v.l, v.i, Math.round(v.x), Math.round(v.y)]);
-            return { s: SESSION_SEED, x: Math.round(c.x), y: Math.round(c.y), z: Math.round(camera.zoom * 100) / 100, o };
+                o.push([v.cx, v.cy, v.l, v.i, Math.round(v.x * 100) / 100, Math.round(v.y * 100) / 100]);
+            return {
+                s: SESSION_SEED,
+                x: Math.round(c.x * 100) / 100,
+                y: Math.round(c.y * 100) / 100,
+                z: Math.round(camera.zoom * 1000) / 1000,
+                t: Math.round(sceneNow()),
+                o
+            };
         }
 
         async function compressScenePayload(payload) {
@@ -575,6 +591,7 @@
                 SESSION_SEED = data.s & 0xFFFFFF;
                 updateSeedDisplay();
             }
+            resetSceneClock(data.t);
             clearSceneOverrides();
             if (Array.isArray(data.o)) {
                 for (const row of data.o) {
@@ -685,8 +702,6 @@
             n.y = n.baseY = n.originY = o.y;
             n.vx = n.vy = 0;
             n.pinned = true;
-            // Restored from share/storage — keep placement, no edit highlight
-            n.editGlow = false;
         }
 
         // Random once per page load — makes every session look different
@@ -904,7 +919,6 @@
                 this.x = 0;     this.y = 0;
                 this.vx = 0;    this.vy = 0;
                 this.pinned = false;
-                this.editGlow = false;
                 this.dragScale   = 1.0;
                 this.brightScale = 1.0;
 
@@ -944,7 +958,8 @@
                 if (!this.pinned) {
                     // Drift: slowly move the rest position so the network is never fully static.
                     // Y uses a 1.3× freq ratio → Lissajous figure-8 paths instead of circles.
-                    const t = performance.now();
+                    // sceneNow() keeps ambient phase stable across share-link reloads.
+                    const t = sceneNow();
                     this.baseX = this.originX + Math.sin(t * this.driftFreq       + this.driftPhaseX) * this.driftAmpX;
                     this.baseY = this.originY + Math.sin(t * this.driftFreq * 1.3 + this.driftPhaseY) * this.driftAmpY;
                 }
@@ -984,7 +999,7 @@
                 this.y += this.vy;
 
                 this.dragScale   += (1.0 - this.dragScale) * 0.1;
-                const targetBright = this.editGlow ? 1.48 : 1.0;
+                const targetBright = this.pinned ? 1.48 : 1.0;
                 this.brightScale += (targetBright - this.brightScale) * 0.1;
             }
 
@@ -1027,22 +1042,21 @@
                 // OPT: radial gradient replaces ctx.filter='blur(Xpx)'.
                 // filter changes flush the entire canvas rasterizer; createRadialGradient
                 // for ~5 neurons/frame is far cheaper.
-                const lit = this.editGlow;
                 if (this.blur > 0) {
                     const r    = this.size * this.dragScale * 2.5 + this.blur * 1.5;
                     const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, r);
                     grad.addColorStop(0,   this.color);
                     grad.addColorStop(0.4, this.color);
                     grad.addColorStop(1,   this.color + '00');
-                    ctx.globalAlpha = this.alpha * this.brightScale * (lit ? 0.32 : 0.2);
+                    ctx.globalAlpha = this.alpha * this.brightScale * (this.pinned ? 0.32 : 0.2);
                     ctx.fillStyle   = grad;
                     ctx.beginPath();
                     ctx.arc(this.x, this.y, r, 0, Math.PI * 2);
                     ctx.fill();
                 }
 
-                // Session-edit highlight only — not applied when loading a share link
-                if (lit) {
+                // Moved orbs: soft white halo so edits read clearly at a glance
+                if (this.pinned) {
                     const hr = this.size * this.dragScale * 3.4;
                     const hg = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, hr);
                     hg.addColorStop(0,   'rgba(255,255,255,0.55)');
@@ -1055,16 +1069,16 @@
                     ctx.fill();
                 }
 
-                ctx.globalAlpha = Math.min(1, this.alpha * this.brightScale * (lit ? 1.15 : 1));
+                ctx.globalAlpha = Math.min(1, this.alpha * this.brightScale * (this.pinned ? 1.15 : 1));
                 ctx.fillStyle   = this.color;
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, this.size * this.dragScale, 0, Math.PI * 2);
                 ctx.fill();
 
-                ctx.globalAlpha = Math.min(1, this.alpha * this.brightScale * (lit ? 0.85 : 0.6));
+                ctx.globalAlpha = Math.min(1, this.alpha * this.brightScale * (this.pinned ? 0.85 : 0.6));
                 ctx.fillStyle   = '#ffffff';
                 ctx.beginPath();
-                ctx.arc(this.x, this.y, this.size * this.dragScale * (lit ? 0.48 : 0.4), 0, Math.PI * 2);
+                ctx.arc(this.x, this.y, this.size * this.dragScale * (this.pinned ? 0.48 : 0.4), 0, Math.PI * 2);
                 ctx.fill();
             }
         }
@@ -1130,6 +1144,16 @@
                 for (let cy = minCY; cy <= maxCY; cy++)
                     required.add(`${cx},${cy}`);
 
+            // Moved orbs keep their spawn-chunk identity even after long drags.
+            // Keep those home chunks loaded whenever the placed position is on-screen,
+            // otherwise share links (and live pans) drop the edits and show wrong orbs.
+            const opad = 200;
+            for (const o of sceneOverrides.values()) {
+                if (o.x + opad > vp.left && o.x - opad < vp.right &&
+                    o.y + opad > vp.top  && o.y - opad < vp.bottom)
+                    required.add(`${o.cx},${o.cy}`);
+            }
+
             if (setsEqual(required, lastChunkKeys)) return;
             lastChunkKeys = required;
             cacheValid = false; // chunks changed → rebuild neuron cache next frame
@@ -1154,7 +1178,6 @@
             n.y = n.baseY = n.originY = n.y;
             n.vx = n.vy = 0;
             n.pinned = true;
-            n.editGlow = true;
             saveSceneOverride(n.chunkX, n.chunkY, n.layer, n.index, n.x, n.y);
         }
 
