@@ -447,11 +447,14 @@
             const n = findNeuronInChunk(cx, cy, layer, i);
             if (!n) return;
             const def = defaultNeuronPos(cx, cy, layer, i);
-            n.baseX = n.x = def.x;
-            n.baseY = n.y = def.y;
+            // Soft release: keep current x/y, retarget origin to procedural home,
+            // and let return-force ease them back (no teleport).
             n.originX = def.x;
             n.originY = def.y;
-            n.vx = n.vy = 0;
+            n.baseX = def.x;
+            n.baseY = def.y;
+            n.vx *= 0.35;
+            n.vy *= 0.35;
             n.pinned = false;
         }
 
