@@ -307,7 +307,7 @@
     </div>
     <div id="sceneNotice" aria-live="polite"></div>
     <div id="sceneInfoPanel" hidden>
-        Scene capacity limits how much moved-orb data fits in a share link.
+        Scene capacity limits how much moved-orb data fits in a share link (fixed link overhead is excluded from the meter).
         Moved orbs glow brighter. Double-click one to reset it (frees capacity; does not count as an auto-removal).
         When full, the least relevant edits are dropped: tiny nudges first, then far from your art cluster, then least recently edited.
         Click the meter to cycle bytes and percent. Copy icon copies a share URL.
@@ -380,7 +380,8 @@
         const SCENE_STORAGE_KEY = 'neuro-tab-scene-v1';
 
         const sceneOverrides = new Map();
-        let _sceneByteSize   = 0;
+        let _sceneByteSize      = 0;
+        let _sceneOverheadBytes = 0;
         let _warnShown       = false;
         let _capacityMode    = parseInt(sessionStorage.getItem('capacityMode') || '0', 10) % 2;
         let _persistTimer    = null;
@@ -515,19 +516,31 @@
             return JSON.parse(await new Response(stream).text());
         }
 
+        async function measurePayloadBytes(payload) {
+            try {
+                const r = await compressScenePayload(payload);
+                return r.bytes;
+            } catch {
+                return new TextEncoder().encode(JSON.stringify(payload)).length;
+            }
+        }
+
         async function refreshSceneByteSize() {
             const payload = buildCompactScene();
             if (payload.o.length === 0) {
                 _sceneByteSize = 0;
+                _sceneOverheadBytes = 0;
                 updateCapacityHud();
                 return;
             }
-            try {
-                const r = await compressScenePayload(payload);
-                _sceneByteSize = r.bytes;
-            } catch {
-                _sceneByteSize = new TextEncoder().encode(JSON.stringify(payload)).length;
-            }
+            // Fixed envelope (seed, camera, schema) is charged once — meter tracks orb data only
+            // so the first move doesn't look like ~40% of the budget.
+            const [total, overhead] = await Promise.all([
+                measurePayloadBytes(payload),
+                measurePayloadBytes({ ...payload, o: [] })
+            ]);
+            _sceneByteSize = total;
+            _sceneOverheadBytes = overhead > total ? 0 : overhead;
             updateCapacityHud();
         }
 
@@ -536,8 +549,14 @@
             _byteSizeTimer = setTimeout(refreshSceneByteSize, 120);
         }
 
+        function sceneContentBytes() {
+            return Math.max(0, _sceneByteSize - _sceneOverheadBytes);
+        }
+
         function sceneBudgetRatio() {
-            return Math.min(1, _sceneByteSize / SCENE_MAX_BYTES);
+            if (_sceneByteSize <= 0) return 0;
+            const usable = Math.max(1, SCENE_MAX_BYTES - _sceneOverheadBytes);
+            return Math.min(1, sceneContentBytes() / usable);
         }
 
         function formatBytes(n) {
@@ -549,7 +568,7 @@
             const ratio = sceneBudgetRatio();
             const text = _capacityMode === 1
                 ? `${Math.round(ratio * 100)}%`
-                : formatBytes(_sceneByteSize);
+                : formatBytes(sceneContentBytes());
 
             capacityTextEl.textContent = text;
             if (ratio >= SCENE_WARN_RATIO && ratio < 1)
@@ -589,6 +608,7 @@
         function clearSceneOverrides() {
             sceneOverrides.clear();
             _sceneByteSize = 0;
+            _sceneOverheadBytes = 0;
             _warnShown = false;
             updateCapacityHud();
             scheduleByteSizeRefresh();
