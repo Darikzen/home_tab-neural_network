@@ -307,6 +307,7 @@
     <div id="sceneNotice" aria-live="polite"></div>
     <div id="sceneInfoPanel" hidden>
         Scene capacity limits how much moved-orb data fits in a share link.
+        Moved orbs glow brighter. Double-click one to reset it (frees capacity; does not count as an auto-removal).
         When full, the least relevant edits are dropped: tiny nudges first, then far from your art cluster, then least recently edited.
         Click the meter to cycle bytes and percent. Copy icon copies a share URL.
     </div>
@@ -975,8 +976,9 @@
                 this.x += this.vx;
                 this.y += this.vy;
 
-                this.dragScale   += (1.0 - this.dragScale)   * 0.1;
-                this.brightScale += (1.0 - this.brightScale) * 0.1;
+                this.dragScale   += (1.0 - this.dragScale) * 0.1;
+                const targetBright = this.pinned ? 1.48 : 1.0;
+                this.brightScale += (targetBright - this.brightScale) * 0.1;
             }
 
             // Cheap AABB — world coords, includes halo radius
@@ -1024,23 +1026,37 @@
                     grad.addColorStop(0,   this.color);
                     grad.addColorStop(0.4, this.color);
                     grad.addColorStop(1,   this.color + '00');
-                    ctx.globalAlpha = this.alpha * this.brightScale * 0.2;
+                    ctx.globalAlpha = this.alpha * this.brightScale * (this.pinned ? 0.32 : 0.2);
                     ctx.fillStyle   = grad;
                     ctx.beginPath();
                     ctx.arc(this.x, this.y, r, 0, Math.PI * 2);
                     ctx.fill();
                 }
 
-                ctx.globalAlpha = this.alpha * this.brightScale;
+                // Moved orbs: soft white halo so edits read clearly at a glance
+                if (this.pinned) {
+                    const hr = this.size * this.dragScale * 3.4;
+                    const hg = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, hr);
+                    hg.addColorStop(0,   'rgba(255,255,255,0.55)');
+                    hg.addColorStop(0.35, 'rgba(189,189,189,0.22)');
+                    hg.addColorStop(1,   'rgba(189,189,189,0)');
+                    ctx.globalAlpha = Math.min(1, this.alpha * 0.85);
+                    ctx.fillStyle   = hg;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, hr, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.globalAlpha = Math.min(1, this.alpha * this.brightScale * (this.pinned ? 1.15 : 1));
                 ctx.fillStyle   = this.color;
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, this.size * this.dragScale, 0, Math.PI * 2);
                 ctx.fill();
 
-                ctx.globalAlpha = this.alpha * this.brightScale * 0.6;
+                ctx.globalAlpha = Math.min(1, this.alpha * this.brightScale * (this.pinned ? 0.85 : 0.6));
                 ctx.fillStyle   = '#ffffff';
                 ctx.beginPath();
-                ctx.arc(this.x, this.y, this.size * this.dragScale * 0.4, 0, Math.PI * 2);
+                ctx.arc(this.x, this.y, this.size * this.dragScale * (this.pinned ? 0.48 : 0.4), 0, Math.PI * 2);
                 ctx.fill();
             }
         }
@@ -1133,6 +1149,23 @@
             saveSceneOverride(n.chunkX, n.chunkY, n.layer, n.index, n.x, n.y);
         }
 
+        /** Manual reset — frees capacity; does not bump the auto-eviction −N flash. */
+        function unpinNeuron(n) {
+            const key = neuronKey(n.chunkX, n.chunkY, n.layer, n.index);
+            if (!sceneOverrides.has(key) && !n.pinned) return false;
+            sceneOverrides.delete(key);
+            releaseOverrideVisual(n.chunkX, n.chunkY, n.layer, n.index);
+            scheduleByteSizeRefresh();
+            schedulePersistScene();
+            scheduleUrlSync();
+            updateCapacityHud();
+            setTimeout(async () => {
+                await refreshSceneByteSize();
+                checkSceneBudgetWarning();
+            }, 150);
+            return true;
+        }
+
         function getNeuronAt(wx, wy) {
             for (let l = 2; l >= 0; l--) {
                 for (const chunk of activeChunks.values()) {
@@ -1190,6 +1223,16 @@
             }
             isPanning = false;
             document.documentElement.style.cursor = customCursor;
+        });
+
+        window.addEventListener('dblclick', (e) => {
+            if (e.target.closest && e.target.closest('.hudLabel, #sceneInfoPanel, #sceneNotice')) return;
+            const w = screenToWorld(e.clientX, e.clientY);
+            const neuron = getNeuronAt(w.x, w.y);
+            if (!neuron || !neuron.pinned) return;
+            e.preventDefault();
+            draggedNeuron = null;
+            unpinNeuron(neuron);
         });
 
         // ── Touch handling ──────────────────────────────────────────────────
@@ -1379,8 +1422,8 @@
 
                 // Inflate dragged neuron
                 if (draggedNeuron && draggedNeuron.layer === layerIndex) {
-                    draggedNeuron.dragScale  += (1.07 - draggedNeuron.dragScale)  * 0.1;
-                    draggedNeuron.brightScale += (1.1  - draggedNeuron.brightScale) * 0.1;
+                    draggedNeuron.dragScale   += (1.07 - draggedNeuron.dragScale)  * 0.1;
+                    draggedNeuron.brightScale += (1.55 - draggedNeuron.brightScale) * 0.1;
                 }
 
                 // Connections — OPT: squared distance check avoids sqrt for most pairs;
