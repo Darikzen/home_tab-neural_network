@@ -608,6 +608,7 @@
         const sceneImportInput  = document.getElementById('sceneImportInput');
         const archiveLeaveDialog = document.getElementById('archiveLeaveDialog');
         const archiveLeaveTitle  = document.getElementById('archiveLeaveTitle');
+        const archiveLeaveBody   = document.getElementById('archiveLeaveBody');
         let _noticeTimer        = null;
         let _evictFlashTimer    = null;
         let _evictFlashCount    = 0;
@@ -794,15 +795,21 @@
 
         function updateInfoPanelText() {
             if (_archiveMode) {
-                sceneInfoText.textContent =
-                    'Archive mode: no share-link limit — edits are kept in this browser and via Save/Import files. ' +
-                    'Moved orbs glow brighter; double-click resets one (eases home). ' +
-                    'Meter shows orb data size or count. Download icon saves a .json scene; Import loads one.';
+                sceneInfoText.innerHTML =
+                    '<p class="infoTitle">Archive mode</p>' +
+                    '<div class="infoBody">' +
+                    '<p>No share-link limit. Edits stay in this browser and in Save/Import files.</p>' +
+                    '<p>Moved orbs glow; double-click resets one (eases home).</p>' +
+                    '<p>Meter: data size or orb count. Download icon saves .json; Import loads one.</p>' +
+                    '</div>';
             } else {
-                sceneInfoText.textContent =
-                    'Share mode: capacity limits how much moved-orb data fits in a link (fixed overhead excluded from the meter). ' +
-                    'Moved orbs glow brighter; double-click resets one. When full, least relevant edits drop. ' +
-                    'Check the box for unlimited archive mode. Copy icon copies a share URL; Import is below.';
+                sceneInfoText.innerHTML =
+                    '<p class="infoTitle">Share mode</p>' +
+                    '<div class="infoBody">' +
+                    '<p>Capacity limits moved-orb data in a share link (fixed overhead excluded from the meter).</p>' +
+                    '<p>Moved orbs glow; double-click resets one. When full, least relevant edits drop.</p>' +
+                    '<p>Check the box for unlimited archive mode. Copy icon copies a share URL.</p>' +
+                    '</div>';
             }
         }
 
@@ -827,9 +834,10 @@
 
         function openLeaveArchiveDialog() {
             const over = _sceneByteSize > SCENE_MAX_BYTES;
-            archiveLeaveTitle.textContent = over
-                ? 'Leave archive mode? Save a scene file first if you want to keep every edit — proceeding will trim least-relevant orbs until the scene fits the share-link budget.'
-                : 'Leave archive mode? Save a scene file first if you may need this layout later — share-link limits and auto-removal will apply again.';
+            archiveLeaveTitle.textContent = 'Leave archive mode?';
+            archiveLeaveBody.textContent = over
+                ? 'Save a scene file first if you want to keep every edit. Proceeding will trim least-relevant orbs until the scene fits the share-link budget.'
+                : 'Save a scene file first if you may need this layout later. Share-link limits and auto-removal will apply again.';
             sceneInfoPanel.classList.remove('show');
             sceneInfoPanel.hidden = true;
             archiveLeaveDialog.hidden = false;
