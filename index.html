@@ -126,22 +126,107 @@
         }
 
         .hudIconBtn .iconCopy,
-        .hudIconBtn .iconCheck {
+        .hudIconBtn .iconCheck,
+        .hudIconBtn .iconSave {
             transition: opacity 0.15s ease;
         }
 
-        .hudIconBtn .iconCheck {
+        .hudIconBtn .iconCheck,
+        .hudIconBtn .iconSave {
             position: absolute;
             opacity: 0;
             pointer-events: none;
         }
 
-        .hudIconBtn.copied .iconCopy {
+        .hudIconBtn.copied .iconCopy,
+        .hudIconBtn.copied .iconSave {
             opacity: 0;
         }
 
         .hudIconBtn.copied .iconCheck {
             opacity: 1;
+        }
+
+        #capacityCopyBtn.archiveAction .iconCopy {
+            opacity: 0;
+        }
+
+        #capacityCopyBtn.archiveAction .iconSave {
+            opacity: 1;
+        }
+
+        #capacityCopyBtn.archiveAction.copied .iconSave {
+            opacity: 0;
+        }
+
+        .archiveToggle {
+            cursor: pointer;
+        }
+
+        .archiveToggle input {
+            position: absolute;
+            opacity: 0;
+            width: 0;
+            height: 0;
+            pointer-events: none;
+        }
+
+        .archiveBox {
+            width: 12px;
+            height: 12px;
+            border: 1.2px solid currentColor;
+            border-radius: 2px;
+            box-sizing: border-box;
+            display: block;
+            position: relative;
+        }
+
+        .archiveToggle input:checked + .archiveBox::after {
+            content: '';
+            position: absolute;
+            left: 2.5px;
+            top: 0.5px;
+            width: 4px;
+            height: 7px;
+            border: solid currentColor;
+            border-width: 0 1.4px 1.4px 0;
+            transform: rotate(45deg);
+        }
+
+        #capacityLabel.archiveOn .archiveToggle {
+            opacity: 0.85;
+            color: #ffffff;
+        }
+
+        #sceneInfoPanel .infoActions {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+            align-items: center;
+        }
+
+        #sceneInfoPanel .infoImportBtn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 8px;
+            border: 1px solid rgba(189, 189, 189, 0.28);
+            border-radius: 5px;
+            background: transparent;
+            color: #bdbdbd;
+            font: inherit;
+            font-size: inherit;
+            letter-spacing: inherit;
+            cursor: pointer;
+        }
+
+        #sceneInfoPanel .infoImportBtn:hover {
+            color: #ffffff;
+            border-color: rgba(189, 189, 189, 0.5);
+        }
+
+        #sceneImportInput {
+            display: none;
         }
 
         @media (hover: none) {
@@ -292,10 +377,19 @@
                     <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
                     <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
                 </svg>
+                <svg class="iconSave" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <path d="M7 2.5v6.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                    <path d="M4.2 6.5 7 9.3 9.8 6.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M2.5 11.5h9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg>
                 <svg class="iconCheck" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                     <path d="M3.5 7.2 5.8 9.5 10.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
             </button>
+            <label class="hudIconBtn archiveToggle" id="archiveToggle" title="Archive mode — unlimited scene file">
+                <input type="checkbox" id="archiveModeChk" aria-label="Archive mode">
+                <span class="archiveBox" aria-hidden="true"></span>
+            </label>
             <button type="button" class="hudIconBtn infoBtn" id="sceneInfoBtn" aria-label="Scene capacity info">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
                     <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.2"/>
@@ -307,10 +401,18 @@
     </div>
     <div id="sceneNotice" aria-live="polite"></div>
     <div id="sceneInfoPanel" hidden>
-        Scene capacity limits how much moved-orb data fits in a share link (fixed link overhead is excluded from the meter).
-        Moved orbs glow brighter. Double-click one to reset it (frees capacity; does not count as an auto-removal).
-        When full, the least relevant edits are dropped: tiny nudges first, then far from your art cluster, then least recently edited.
-        Click the meter to cycle bytes and percent. Copy icon copies a share URL.
+        <div id="sceneInfoText"></div>
+        <div class="infoActions">
+            <button type="button" class="infoImportBtn" id="sceneImportBtn" aria-label="Import scene file">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <path d="M7 11.5V5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                    <path d="M4.2 7.3 7 4.5 9.8 7.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M2.5 2.5h9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg>
+                Import file
+            </button>
+            <input type="file" id="sceneImportInput" accept="application/json,.json">
+        </div>
     </div>
 
     <script>
@@ -378,11 +480,13 @@
         const SCENE_MAX_BYTES   = 180;
         const SCENE_WARN_RATIO  = 0.8;
         const SCENE_STORAGE_KEY = 'neuro-tab-scene-v1';
+        const ARCHIVE_MODE_KEY  = 'neuro-tab-archive-v1';
 
         const sceneOverrides = new Map();
         let _sceneByteSize      = 0;
         let _sceneOverheadBytes = 0;
         let _warnShown       = false;
+        let _archiveMode     = localStorage.getItem(ARCHIVE_MODE_KEY) === '1';
         let _capacityMode    = parseInt(sessionStorage.getItem('capacityMode') || '0', 10) % 2;
         let _persistTimer    = null;
         let _urlSyncTimer    = null;
@@ -403,9 +507,15 @@
 
         const capacityTextEl    = document.getElementById('capacityText');
         const capacityEvictedEl = document.getElementById('capacityEvicted');
+        const capacityLabelEl   = document.getElementById('capacityLabel');
+        const capacityCopyBtn   = document.getElementById('capacityCopyBtn');
+        const archiveModeChk    = document.getElementById('archiveModeChk');
         const sceneNoticeEl     = document.getElementById('sceneNotice');
         const sceneInfoBtn      = document.getElementById('sceneInfoBtn');
         const sceneInfoPanel    = document.getElementById('sceneInfoPanel');
+        const sceneInfoText     = document.getElementById('sceneInfoText');
+        const sceneImportBtn    = document.getElementById('sceneImportBtn');
+        const sceneImportInput  = document.getElementById('sceneImportInput');
         let _noticeTimer        = null;
         let _evictFlashTimer    = null;
         let _evictFlashCount    = 0;
@@ -567,16 +677,109 @@
         }
 
         function updateCapacityHud() {
+            if (_archiveMode) {
+                const text = _capacityMode === 1
+                    ? `${sceneOverrides.size}`
+                    : formatBytes(sceneContentBytes());
+                capacityTextEl.textContent = text;
+                capacityTextEl.style.color = '#ffffff';
+                capacityTextEl.title = 'Archive mode — click to cycle bytes / orb count';
+                return;
+            }
             const ratio = sceneBudgetRatio();
             const text = _capacityMode === 1
                 ? `${Math.round(ratio * 100)}%`
                 : formatBytes(sceneContentBytes());
 
             capacityTextEl.textContent = text;
+            capacityTextEl.title = 'Share capacity — click to cycle bytes / percent';
             if (ratio >= SCENE_WARN_RATIO && ratio < 1)
                 capacityTextEl.style.color = '#bdbdbd';
             else
                 capacityTextEl.style.color = '#ffffff';
+        }
+
+        function updateInfoPanelText() {
+            if (_archiveMode) {
+                sceneInfoText.textContent =
+                    'Archive mode: no share-link limit — edits are kept in this browser and via Save/Import files. ' +
+                    'Moved orbs glow brighter; double-click resets one (eases home). ' +
+                    'Meter shows orb data size or count. Download icon saves a .json scene; Import loads one.';
+            } else {
+                sceneInfoText.textContent =
+                    'Share mode: capacity limits how much moved-orb data fits in a link (fixed overhead excluded from the meter). ' +
+                    'Moved orbs glow brighter; double-click resets one. When full, least relevant edits drop. ' +
+                    'Check the box for unlimited archive mode. Copy icon copies a share URL; Import is below.';
+            }
+        }
+
+        function syncArchiveChrome() {
+            capacityLabelEl.classList.toggle('archiveOn', _archiveMode);
+            capacityCopyBtn.classList.toggle('archiveAction', _archiveMode);
+            archiveModeChk.checked = _archiveMode;
+            capacityCopyBtn.setAttribute('aria-label', _archiveMode ? 'Save scene file' : 'Copy share link');
+            capacityCopyBtn.title = _archiveMode ? 'Save scene file' : 'Copy share link';
+            updateInfoPanelText();
+            updateCapacityHud();
+        }
+
+        async function enforceShareBudget() {
+            await refreshSceneByteSize();
+            let guard = 0;
+            while (_sceneByteSize > SCENE_MAX_BYTES && evictLeastRelevant() && guard++ < 500) {
+                await refreshSceneByteSize();
+            }
+            checkSceneBudgetWarning();
+        }
+
+        function setArchiveMode(on, { silent } = {}) {
+            on = !!on;
+            if (on === _archiveMode) {
+                syncArchiveChrome();
+                return true;
+            }
+            if (on) {
+                if (!silent && !confirm(
+                    'Enable archive mode?\n\n' +
+                    'No share-link size limit — nothing will be auto-removed.\n' +
+                    'Use the download icon to save a scene file; Import is in the info panel.\n' +
+                    'The address bar will not carry the full scene.'
+                )) {
+                    archiveModeChk.checked = false;
+                    return false;
+                }
+                _archiveMode = true;
+                localStorage.setItem(ARCHIVE_MODE_KEY, '1');
+                _warnShown = false;
+                syncArchiveChrome();
+                schedulePersistScene();
+                scheduleUrlSync();
+                if (!silent) showSceneNotice('Archive mode on');
+                return true;
+            }
+
+            // Leaving archive — may need to trim for share budget
+            const over = _sceneByteSize > SCENE_MAX_BYTES;
+            if (!silent) {
+                const msg = over
+                    ? 'Leave archive mode?\n\nThis scene is over the share-link limit. Least relevant edits will be removed until it fits.'
+                    : 'Leave archive mode?\n\nShare-link capacity limits and auto-removal will apply again.';
+                if (!confirm(msg)) {
+                    archiveModeChk.checked = true;
+                    return false;
+                }
+            }
+            _archiveMode = false;
+            localStorage.setItem(ARCHIVE_MODE_KEY, '0');
+            syncArchiveChrome();
+            schedulePersistScene();
+            scheduleUrlSync();
+            if (over) {
+                enforceShareBudget().then(() => showSceneNotice('Trimmed to share limit'));
+            } else if (!silent) {
+                showSceneNotice('Share mode on');
+            }
+            return true;
         }
 
         function showEvictionFlash(count) {
@@ -599,6 +802,7 @@
         }
 
         function checkSceneBudgetWarning() {
+            if (_archiveMode) return;
             const ratio = sceneBudgetRatio();
             if (ratio >= SCENE_WARN_RATIO && ratio < 1 && !_warnShown) {
                 _warnShown = true;
@@ -689,6 +893,15 @@
         function scheduleUrlSync() {
             clearTimeout(_urlSyncTimer);
             _urlSyncTimer = setTimeout(async () => {
+                const payload = buildCompactScene();
+                const base = location.origin + location.pathname;
+                // Archive: keep a light URL (seed + view) — full scene lives in files / localStorage
+                if (_archiveMode) {
+                    _cachedShareUrl = '';
+                    history.replaceState(null, '',
+                        `${base}?s=${formatSeedHex(SESSION_SEED)}&x=${payload.x}&y=${payload.y}&z=${payload.z}`);
+                    return;
+                }
                 if (sceneOverrides.size === 0) {
                     _cachedShareUrl = '';
                     return;
@@ -700,7 +913,53 @@
                     history.replaceState(null, '', url);
                 } catch { /* ignore */ }
             }, 900);
-            refreshShareUrlCache();
+            if (!_archiveMode) refreshShareUrlCache();
+        }
+
+        function downloadSceneFile() {
+            const payload = Object.assign({ v: 1 }, buildCompactScene());
+            const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `neuro-tab-${formatSeedHex(SESSION_SEED)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            showSceneNotice('Scene file saved');
+        }
+
+        async function importSceneFromFile(file) {
+            let data;
+            try {
+                data = JSON.parse(await file.text());
+            } catch {
+                showSceneNotice('Could not read scene file');
+                return;
+            }
+            if (!data || typeof data !== 'object') {
+                showSceneNotice('Invalid scene file');
+                return;
+            }
+            applyScenePayload(data);
+            await refreshSceneByteSize();
+            if (!_archiveMode && _sceneByteSize > SCENE_MAX_BYTES) {
+                if (confirm(
+                    'This scene exceeds the share-link limit.\n\n' +
+                    'Enable archive mode to keep every edit?'
+                )) {
+                    setArchiveMode(true, { silent: true });
+                    showSceneNotice('Imported · archive on');
+                } else {
+                    await enforceShareBudget();
+                    showSceneNotice('Imported · trimmed to share limit');
+                }
+            } else {
+                showSceneNotice('Scene imported');
+            }
+            schedulePersistScene();
+            scheduleUrlSync();
         }
 
         function saveSceneOverride(cx, cy, l, i, x, y) {
@@ -712,13 +971,15 @@
 
             if (isNew) {
                 scheduleByteSizeRefresh();
-                setTimeout(async () => {
-                    await refreshSceneByteSize();
-                    while (_sceneByteSize > SCENE_MAX_BYTES && evictLeastRelevant()) {
+                if (!_archiveMode) {
+                    setTimeout(async () => {
                         await refreshSceneByteSize();
-                    }
-                    checkSceneBudgetWarning();
-                }, 150);
+                        while (_sceneByteSize > SCENE_MAX_BYTES && evictLeastRelevant()) {
+                            await refreshSceneByteSize();
+                        }
+                        checkSceneBudgetWarning();
+                    }, 150);
+                }
             } else {
                 scheduleByteSizeRefresh();
             }
@@ -917,11 +1178,25 @@
             updateCapacityHud();
         });
 
-        bindCopyBtn(
-            document.getElementById('capacityCopyBtn'),
-            getShareUrlSync,
-            () => showSceneNotice('Share link copied')
-        );
+        capacityCopyBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (_archiveMode) {
+                downloadSceneFile();
+                flashCopyBtn(capacityCopyBtn);
+            } else {
+                copyTextSync(getShareUrlSync());
+                flashCopyBtn(capacityCopyBtn);
+                showSceneNotice('Share link copied');
+            }
+        });
+
+        archiveModeChk.addEventListener('change', () => {
+            setArchiveMode(archiveModeChk.checked);
+        });
+
+        // Prevent label click from bubbling to document (info panel close)
+        document.getElementById('archiveToggle').addEventListener('click', (e) => e.stopPropagation());
 
         sceneInfoBtn.addEventListener('click', (e) => {
             e.preventDefault();
@@ -930,11 +1205,24 @@
             sceneInfoPanel.hidden = !open;
         });
 
+        sceneImportBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            sceneImportInput.click();
+        });
+
+        sceneImportInput.addEventListener('change', async () => {
+            const file = sceneImportInput.files && sceneImportInput.files[0];
+            sceneImportInput.value = '';
+            if (file) await importSceneFromFile(file);
+        });
+
         document.addEventListener('click', (e) => {
             if (!sceneInfoPanel.contains(e.target) && e.target !== sceneInfoBtn)
                 sceneInfoPanel.classList.remove('show');
         });
 
+        syncArchiveChrome();
         updateSeedDisplay();
         updateCoordLabel();
 
