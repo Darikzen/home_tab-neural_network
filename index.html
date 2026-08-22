@@ -329,47 +329,46 @@
 
         #archiveLeaveDialog {
             position: fixed;
-            inset: 0;
-            z-index: 30;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 16px;
-            background: rgba(33, 33, 33, 0.72);
+            right: 8px;
+            bottom: 44px;
+            max-width: min(320px, calc(100vw - 16px));
+            padding: 10px 12px;
             font-family: ui-monospace, 'Cascadia Mono', 'Cascadia Code', 'Courier New', monospace;
-        }
-
-        #archiveLeaveDialog[hidden] {
-            display: none;
-        }
-
-        #archiveLeaveDialog .dialogCard {
-            max-width: min(360px, calc(100vw - 32px));
-            padding: 16px 16px 14px;
-            background: rgba(33, 33, 33, 0.96);
-            border: 1px solid rgba(189, 189, 189, 0.28);
-            border-radius: 8px;
-            color: #bdbdbd;
-            font-size: clamp(10pt, 2.3vw, 13pt);
+            font-size: clamp(9pt, 2.2vw, 12pt);
             line-height: 1.45;
             letter-spacing: 0.04em;
+            color: #bdbdbd;
+            background: rgba(33, 33, 33, 0.92);
+            border: 1px solid rgba(189, 189, 189, 0.2);
+            border-radius: 6px;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+            pointer-events: none;
+            z-index: 12;
         }
 
-        #archiveLeaveDialog .dialogCard p {
-            margin: 0 0 14px;
+        #archiveLeaveDialog.show {
+            opacity: 0.65;
+            pointer-events: auto;
+        }
+
+        #archiveLeaveDialog p {
+            margin: 0 0 10px;
         }
 
         #archiveLeaveDialog .dialogActions {
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
-            justify-content: flex-end;
+            align-items: center;
         }
 
         #archiveLeaveDialog .dialogBtn {
-            padding: 6px 12px;
+            display: inline-flex;
+            align-items: center;
+            padding: 5px 8px;
+            border: 1px solid rgba(189, 189, 189, 0.28);
             border-radius: 5px;
-            border: 1px solid rgba(189, 189, 189, 0.3);
             background: transparent;
             color: #bdbdbd;
             font: inherit;
@@ -380,13 +379,12 @@
 
         #archiveLeaveDialog .dialogBtn:hover {
             color: #ffffff;
-            border-color: rgba(189, 189, 189, 0.55);
+            border-color: rgba(189, 189, 189, 0.5);
         }
 
         #archiveLeaveDialog .dialogBtn.primary {
             color: #ffffff;
-            border-color: rgba(189, 189, 189, 0.55);
-            background: rgba(189, 189, 189, 0.12);
+            border-color: rgba(189, 189, 189, 0.45);
         }
 
         ::selection {
@@ -477,13 +475,11 @@
         </div>
     </div>
     <div id="archiveLeaveDialog" hidden role="dialog" aria-modal="true" aria-labelledby="archiveLeaveTitle">
-        <div class="dialogCard">
-            <p id="archiveLeaveTitle">Leave archive mode? Save a scene file first if you want to keep every edit — share mode may remove orbs that do not fit the link budget.</p>
-            <div class="dialogActions">
-                <button type="button" class="dialogBtn" id="archiveLeaveCancel">Cancel</button>
-                <button type="button" class="dialogBtn" id="archiveLeaveSave">Save</button>
-                <button type="button" class="dialogBtn primary" id="archiveLeaveProceed">Proceed</button>
-            </div>
+        <p id="archiveLeaveTitle">Leave archive mode? Save a scene file first if you want to keep every edit — share mode may remove orbs that do not fit the link budget.</p>
+        <div class="dialogActions">
+            <button type="button" class="dialogBtn" id="archiveLeaveCancel">Cancel</button>
+            <button type="button" class="dialogBtn" id="archiveLeaveSave">Save</button>
+            <button type="button" class="dialogBtn primary" id="archiveLeaveProceed">Proceed</button>
         </div>
     </div>
 
@@ -812,12 +808,16 @@
             archiveLeaveTitle.textContent = over
                 ? 'Leave archive mode? Save a scene file first if you want to keep every edit — proceeding will trim least-relevant orbs until the scene fits the share-link budget.'
                 : 'Leave archive mode? Save a scene file first if you may need this layout later — share-link limits and auto-removal will apply again.';
+            sceneInfoPanel.classList.remove('show');
+            sceneInfoPanel.hidden = true;
             archiveLeaveDialog.hidden = false;
+            archiveLeaveDialog.classList.add('show');
             _leaveArchivePending = true;
             archiveModeChk.checked = true; // stay checked until Proceed
         }
 
         function closeLeaveArchiveDialog() {
+            archiveLeaveDialog.classList.remove('show');
             archiveLeaveDialog.hidden = true;
             _leaveArchivePending = false;
             archiveModeChk.checked = _archiveMode;
