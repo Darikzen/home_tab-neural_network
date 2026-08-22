@@ -49,11 +49,22 @@
 
         #seedLabel {
             left: 8px;
+            flex-direction: row;
+            gap: 10px;
         }
 
         #coordLabel {
             right: 8px;
-            flex-direction: row-reverse;
+            flex-direction: row;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .hudActions {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            flex-shrink: 0;
         }
 
         .hudInput {
@@ -165,7 +176,8 @@
             min-width: 7em;
         }
 
-        .capacityActions {
+        .capacityActions,
+        .hudActions {
             display: flex;
             align-items: center;
             gap: 2px;
@@ -231,28 +243,32 @@
 <body>
     <canvas id="neuralCanvas"></canvas>
     <div id="seedLabel" class="hudLabel">
+        <div class="hudActions">
+            <button type="button" class="hudIconBtn copyBtn" aria-label="Copy seed">
+                <svg class="iconCopy" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                    <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
+                </svg>
+                <svg class="iconCheck" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <path d="M3.5 7.2 5.8 9.5 10.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+        </div>
         <input id="seedInput" class="hudInput" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="7" aria-label="Seed" title="Paste or type hex seed, Enter to apply">
-        <button type="button" class="hudIconBtn copyBtn" aria-label="Copy seed">
-            <svg class="iconCopy" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
-                <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
-            </svg>
-            <svg class="iconCheck" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                <path d="M3.5 7.2 5.8 9.5 10.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-        </button>
     </div>
     <div id="coordLabel" class="hudLabel">
         <input id="coordInput" class="hudInput" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="View center coordinates" title="View center x, y — paste and Enter to go">
-        <button type="button" class="hudIconBtn copyBtn" aria-label="Copy coordinates">
-            <svg class="iconCopy" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
-                <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
-            </svg>
-            <svg class="iconCheck" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                <path d="M3.5 7.2 5.8 9.5 10.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-        </button>
+        <div class="hudActions">
+            <button type="button" class="hudIconBtn copyBtn" aria-label="Copy coordinates">
+                <svg class="iconCopy" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                    <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
+                </svg>
+                <svg class="iconCheck" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <path d="M3.5 7.2 5.8 9.5 10.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+        </div>
     </div>
     <div id="capacityLabel" class="hudLabel hudLabelBottom">
         <span id="capacityText">0%</span>
@@ -1401,6 +1417,7 @@
         initScene().then(() => {
             updateCoordLabel();
             refreshSceneByteSize();
+            refreshShareUrlCache();
         });
 
         animate();
