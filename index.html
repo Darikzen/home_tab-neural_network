@@ -81,6 +81,7 @@
 
         .hudIconBtn {
             flex-shrink: 0;
+            position: relative;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -91,45 +92,58 @@
             border: none;
             border-radius: 6px;
             background: transparent;
-            color: inherit;
+            color: rgba(255, 255, 255, 0.55);
             cursor: pointer;
             opacity: 0;
-            transition: opacity 0.5s ease, background-color 0.15s ease, transform 0.12s ease;
+            transition: opacity 0.5s ease, color 0.15s ease, transform 0.12s ease;
             -webkit-tap-highlight-color: transparent;
             touch-action: manipulation;
         }
 
         .hudLabel:hover .hudIconBtn,
         .hudLabel:focus-within .hudIconBtn {
-            opacity: 0.8;
+            opacity: 0.85;
         }
 
         .hudIconBtn:hover {
             opacity: 1;
-            background: rgba(189, 189, 189, 0.14);
+            color: #ffffff;
         }
 
         .hudIconBtn:active {
             opacity: 1;
-            background: rgba(189, 189, 189, 0.22);
+            color: #ffffff;
             transform: scale(0.94);
         }
 
         .hudIconBtn.copied {
             opacity: 1;
-            background: rgba(189, 189, 189, 0.28);
+            color: #ffffff;
+        }
+
+        .hudIconBtn .iconCopy,
+        .hudIconBtn .iconCheck {
+            transition: opacity 0.15s ease;
         }
 
         .hudIconBtn .iconCheck {
-            display: none;
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
         }
 
         .hudIconBtn.copied .iconCopy {
-            display: none;
+            opacity: 0;
         }
 
         .hudIconBtn.copied .iconCheck {
-            display: block;
+            opacity: 1;
+        }
+
+        @media (hover: none) {
+            .hudLabel:active .hudIconBtn {
+                opacity: 0.9;
+            }
         }
 
         .hudLabelBottom {
@@ -339,6 +353,7 @@
         let _persistTimer    = null;
         let _urlSyncTimer    = null;
         let _byteSizeTimer   = null;
+        let _cachedShareUrl  = '';
 
         const capacityTextEl = document.getElementById('capacityText');
         const sceneNoticeEl  = document.getElementById('sceneNotice');
@@ -544,16 +559,38 @@
             }
         }
 
+        function getShareUrlSync() {
+            if (_cachedShareUrl) return _cachedShareUrl;
+            const payload = buildCompactScene();
+            const base = location.origin + location.pathname;
+            if (!payload.o || payload.o.length === 0)
+                return `${base}?s=${formatSeedHex(SESSION_SEED)}&x=${payload.x}&y=${payload.y}&z=${payload.z}`;
+            return base + '?q=' + encodeURIComponent(JSON.stringify(payload));
+        }
+
+        async function refreshShareUrlCache() {
+            try {
+                _cachedShareUrl = await buildShareUrl();
+            } catch {
+                _cachedShareUrl = getShareUrlSync();
+            }
+        }
+
         function scheduleUrlSync() {
             clearTimeout(_urlSyncTimer);
             _urlSyncTimer = setTimeout(async () => {
-                if (sceneOverrides.size === 0) return;
+                if (sceneOverrides.size === 0) {
+                    _cachedShareUrl = '';
+                    return;
+                }
                 try {
-                    const url = await buildShareUrl();
+                    await refreshShareUrlCache();
+                    const url = _cachedShareUrl;
                     if (url.length > 8000) return;
                     history.replaceState(null, '', url);
                 } catch { /* ignore */ }
             }, 900);
+            refreshShareUrlCache();
         }
 
         function saveSceneOverride(cx, cy, l, i, x, y) {
@@ -689,36 +726,41 @@
             btn._fadeTimer = setTimeout(() => btn.classList.remove('copied'), 1400);
         }
 
-        async function copyToClipboard(text) {
-            try {
-                if (navigator.clipboard?.writeText) {
-                    await navigator.clipboard.writeText(text);
-                    return true;
-                }
-            } catch { /* fallback below */ }
+        function copyTextSync(text) {
             try {
                 const ta = document.createElement('textarea');
                 ta.value = text;
+                ta.setAttribute('readonly', '');
                 ta.style.position = 'fixed';
                 ta.style.left = '-9999px';
                 document.body.appendChild(ta);
                 ta.select();
                 const ok = document.execCommand('copy');
                 document.body.removeChild(ta);
-                return ok;
+                if (ok) return true;
+            } catch { /* fall through */ }
+            try {
+                navigator.clipboard.writeText(text);
+                return true;
             } catch {
                 return false;
             }
         }
 
+        function bindCopyBtn(btn, getText, afterCopy) {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                copyTextSync(getText());
+                flashCopyBtn(btn);
+                afterCopy?.();
+            });
+        }
+
         function setupHudField({ inputEl, copyBtn, onApply, getCopyText }) {
             let editStart = '';
 
-            copyBtn.addEventListener('click', async (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (await copyToClipboard(getCopyText())) flashCopyBtn(copyBtn);
-            });
+            bindCopyBtn(copyBtn, getCopyText);
 
             inputEl.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
@@ -767,15 +809,11 @@
             updateCapacityHud();
         });
 
-        document.getElementById('capacityCopyBtn').addEventListener('click', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const url = await buildShareUrl();
-            if (await copyToClipboard(url)) {
-                flashCopyBtn(e.currentTarget);
-                showSceneNotice('Share link copied');
-            }
-        });
+        bindCopyBtn(
+            document.getElementById('capacityCopyBtn'),
+            getShareUrlSync,
+            () => showSceneNotice('Share link copied')
+        );
 
         sceneInfoBtn.addEventListener('click', (e) => {
             e.preventDefault();
