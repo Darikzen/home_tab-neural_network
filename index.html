@@ -327,6 +327,68 @@
             pointer-events: auto;
         }
 
+        #archiveLeaveDialog {
+            position: fixed;
+            inset: 0;
+            z-index: 30;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            background: rgba(33, 33, 33, 0.72);
+            font-family: ui-monospace, 'Cascadia Mono', 'Cascadia Code', 'Courier New', monospace;
+        }
+
+        #archiveLeaveDialog[hidden] {
+            display: none;
+        }
+
+        #archiveLeaveDialog .dialogCard {
+            max-width: min(360px, calc(100vw - 32px));
+            padding: 16px 16px 14px;
+            background: rgba(33, 33, 33, 0.96);
+            border: 1px solid rgba(189, 189, 189, 0.28);
+            border-radius: 8px;
+            color: #bdbdbd;
+            font-size: clamp(10pt, 2.3vw, 13pt);
+            line-height: 1.45;
+            letter-spacing: 0.04em;
+        }
+
+        #archiveLeaveDialog .dialogCard p {
+            margin: 0 0 14px;
+        }
+
+        #archiveLeaveDialog .dialogActions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        #archiveLeaveDialog .dialogBtn {
+            padding: 6px 12px;
+            border-radius: 5px;
+            border: 1px solid rgba(189, 189, 189, 0.3);
+            background: transparent;
+            color: #bdbdbd;
+            font: inherit;
+            font-size: inherit;
+            letter-spacing: inherit;
+            cursor: pointer;
+        }
+
+        #archiveLeaveDialog .dialogBtn:hover {
+            color: #ffffff;
+            border-color: rgba(189, 189, 189, 0.55);
+        }
+
+        #archiveLeaveDialog .dialogBtn.primary {
+            color: #ffffff;
+            border-color: rgba(189, 189, 189, 0.55);
+            background: rgba(189, 189, 189, 0.12);
+        }
+
         ::selection {
             background: rgba(189, 189, 189, 0.35);
             color: #ffffff;
@@ -412,6 +474,16 @@
                 Import file
             </button>
             <input type="file" id="sceneImportInput" accept="application/json,.json">
+        </div>
+    </div>
+    <div id="archiveLeaveDialog" hidden role="dialog" aria-modal="true" aria-labelledby="archiveLeaveTitle">
+        <div class="dialogCard">
+            <p id="archiveLeaveTitle">Leave archive mode? Save a scene file first if you want to keep every edit — share mode may remove orbs that do not fit the link budget.</p>
+            <div class="dialogActions">
+                <button type="button" class="dialogBtn" id="archiveLeaveCancel">Cancel</button>
+                <button type="button" class="dialogBtn" id="archiveLeaveSave">Save</button>
+                <button type="button" class="dialogBtn primary" id="archiveLeaveProceed">Proceed</button>
+            </div>
         </div>
     </div>
 
@@ -516,9 +588,12 @@
         const sceneInfoText     = document.getElementById('sceneInfoText');
         const sceneImportBtn    = document.getElementById('sceneImportBtn');
         const sceneImportInput  = document.getElementById('sceneImportInput');
+        const archiveLeaveDialog = document.getElementById('archiveLeaveDialog');
+        const archiveLeaveTitle  = document.getElementById('archiveLeaveTitle');
         let _noticeTimer        = null;
         let _evictFlashTimer    = null;
         let _evictFlashCount    = 0;
+        let _leaveArchivePending = false;
 
         function neuronKey(cx, cy, layer, i) {
             return `${cx},${cy}:${layer}:${i}`;
@@ -732,6 +807,30 @@
             checkSceneBudgetWarning();
         }
 
+        function openLeaveArchiveDialog() {
+            const over = _sceneByteSize > SCENE_MAX_BYTES;
+            archiveLeaveTitle.textContent = over
+                ? 'Leave archive mode? Save a scene file first if you want to keep every edit — proceeding will trim least-relevant orbs until the scene fits the share-link budget.'
+                : 'Leave archive mode? Save a scene file first if you may need this layout later — share-link limits and auto-removal will apply again.';
+            archiveLeaveDialog.hidden = false;
+            _leaveArchivePending = true;
+            archiveModeChk.checked = true; // stay checked until Proceed
+        }
+
+        function closeLeaveArchiveDialog() {
+            archiveLeaveDialog.hidden = true;
+            _leaveArchivePending = false;
+            archiveModeChk.checked = _archiveMode;
+        }
+
+        function applyArchiveOff() {
+            _archiveMode = false;
+            localStorage.setItem(ARCHIVE_MODE_KEY, '0');
+            syncArchiveChrome();
+            schedulePersistScene();
+            scheduleUrlSync();
+        }
+
         function setArchiveMode(on, { silent } = {}) {
             on = !!on;
             if (on === _archiveMode) {
@@ -758,28 +857,25 @@
                 return true;
             }
 
-            // Leaving archive — may need to trim for share budget
-            const over = _sceneByteSize > SCENE_MAX_BYTES;
-            if (!silent) {
-                const msg = over
-                    ? 'Leave archive mode?\n\nThis scene is over the share-link limit. Least relevant edits will be removed until it fits.'
-                    : 'Leave archive mode?\n\nShare-link capacity limits and auto-removal will apply again.';
-                if (!confirm(msg)) {
-                    archiveModeChk.checked = true;
-                    return false;
-                }
+            // Leaving archive — never silent-trim without the save/proceed dialog
+            if (silent) {
+                applyArchiveOff();
+                return true;
             }
-            _archiveMode = false;
-            localStorage.setItem(ARCHIVE_MODE_KEY, '0');
-            syncArchiveChrome();
-            schedulePersistScene();
-            scheduleUrlSync();
+            openLeaveArchiveDialog();
+            return false;
+        }
+
+        async function proceedLeaveArchive() {
+            const over = _sceneByteSize > SCENE_MAX_BYTES;
+            closeLeaveArchiveDialog();
+            applyArchiveOff();
             if (over) {
-                enforceShareBudget().then(() => showSceneNotice('Trimmed to share limit'));
-            } else if (!silent) {
+                await enforceShareBudget();
+                showSceneNotice('Share mode on · trimmed to link limit');
+            } else {
                 showSceneNotice('Share mode on');
             }
-            return true;
         }
 
         function showEvictionFlash(count) {
@@ -944,20 +1040,9 @@
             }
             applyScenePayload(data);
             await refreshSceneByteSize();
-            if (!_archiveMode && _sceneByteSize > SCENE_MAX_BYTES) {
-                if (confirm(
-                    'This scene exceeds the share-link limit.\n\n' +
-                    'Enable archive mode to keep every edit?'
-                )) {
-                    setArchiveMode(true, { silent: true });
-                    showSceneNotice('Imported · archive on');
-                } else {
-                    await enforceShareBudget();
-                    showSceneNotice('Imported · trimmed to share limit');
-                }
-            } else {
-                showSceneNotice('Scene imported');
-            }
+            // Files are the archive path — turn archive on so nothing is trimmed on import
+            setArchiveMode(true, { silent: true });
+            showSceneNotice('Scene imported · archive on');
             schedulePersistScene();
             scheduleUrlSync();
         }
@@ -1193,6 +1278,33 @@
 
         archiveModeChk.addEventListener('change', () => {
             setArchiveMode(archiveModeChk.checked);
+        });
+
+        document.getElementById('archiveLeaveCancel').addEventListener('click', (e) => {
+            e.preventDefault();
+            closeLeaveArchiveDialog();
+        });
+
+        document.getElementById('archiveLeaveSave').addEventListener('click', (e) => {
+            e.preventDefault();
+            downloadSceneFile();
+            // Stay in archive; dialog remains so they can Proceed after saving
+        });
+
+        document.getElementById('archiveLeaveProceed').addEventListener('click', (e) => {
+            e.preventDefault();
+            proceedLeaveArchive();
+        });
+
+        archiveLeaveDialog.addEventListener('click', (e) => {
+            if (e.target === archiveLeaveDialog) closeLeaveArchiveDialog();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !archiveLeaveDialog.hidden) {
+                e.preventDefault();
+                closeLeaveArchiveDialog();
+            }
         });
 
         // Prevent label click from bubbling to document (info panel close)
@@ -1630,7 +1742,7 @@
         });
 
         window.addEventListener('dblclick', (e) => {
-            if (e.target.closest && e.target.closest('.hudLabel, #sceneInfoPanel, #sceneNotice')) return;
+            if (e.target.closest && e.target.closest('.hudLabel, #sceneInfoPanel, #sceneNotice, #archiveLeaveDialog')) return;
             const w = screenToWorld(e.clientX, e.clientY);
             const neuron = getNeuronAt(w.x, w.y);
             if (!neuron || !neuron.pinned) return;
