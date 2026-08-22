@@ -198,6 +198,20 @@
             color: #ffffff;
         }
 
+        #sceneInfoPanel .infoTitle {
+            margin: 0 0 8px;
+            color: #ffffff;
+            font-weight: 600;
+        }
+
+        #sceneInfoPanel .infoBody p {
+            margin: 0 0 7px;
+        }
+
+        #sceneInfoPanel .infoBody p:last-child {
+            margin-bottom: 0;
+        }
+
         #sceneInfoPanel .infoActions {
             display: flex;
             gap: 8px;
@@ -353,7 +367,13 @@
         }
 
         #archiveLeaveDialog p {
-            margin: 0 0 10px;
+            margin: 0 0 7px;
+        }
+
+        #archiveLeaveDialog .dialogTitle {
+            margin: 0 0 8px;
+            color: #ffffff;
+            font-weight: 600;
         }
 
         #archiveLeaveDialog .dialogActions {
@@ -361,6 +381,7 @@
             flex-wrap: wrap;
             gap: 8px;
             align-items: center;
+            margin-top: 10px;
         }
 
         #archiveLeaveDialog .dialogBtn {
@@ -475,7 +496,8 @@
         </div>
     </div>
     <div id="archiveLeaveDialog" hidden role="dialog" aria-modal="true" aria-labelledby="archiveLeaveTitle">
-        <p id="archiveLeaveTitle">Leave archive mode? Save a scene file first if you want to keep every edit — share mode may remove orbs that do not fit the link budget.</p>
+        <p class="dialogTitle" id="archiveLeaveTitle">Leave archive mode?</p>
+        <p id="archiveLeaveBody">Save a scene file first if you want to keep every edit.</p>
         <div class="dialogActions">
             <button type="button" class="dialogBtn" id="archiveLeaveCancel">Cancel</button>
             <button type="button" class="dialogBtn" id="archiveLeaveSave">Save</button>
@@ -1297,11 +1319,11 @@
         });
 
         archiveLeaveDialog.addEventListener('click', (e) => {
-            if (e.target === archiveLeaveDialog) closeLeaveArchiveDialog();
+            e.stopPropagation();
         });
 
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && !archiveLeaveDialog.hidden) {
+            if (e.key === 'Escape' && archiveLeaveDialog.classList.contains('show')) {
                 e.preventDefault();
                 closeLeaveArchiveDialog();
             }
@@ -1313,6 +1335,7 @@
         sceneInfoBtn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (archiveLeaveDialog.classList.contains('show')) closeLeaveArchiveDialog();
             const open = sceneInfoPanel.classList.toggle('show');
             sceneInfoPanel.hidden = !open;
         });
@@ -1332,6 +1355,14 @@
         document.addEventListener('click', (e) => {
             if (!sceneInfoPanel.contains(e.target) && e.target !== sceneInfoBtn)
                 sceneInfoPanel.classList.remove('show');
+            if (
+                archiveLeaveDialog.classList.contains('show') &&
+                !archiveLeaveDialog.contains(e.target) &&
+                e.target !== archiveModeChk &&
+                !e.target.closest?.('#archiveToggle')
+            ) {
+                closeLeaveArchiveDialog();
+            }
         });
 
         syncArchiveChrome();
