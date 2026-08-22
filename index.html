@@ -95,6 +95,89 @@
             opacity: 1;
             transition: opacity 0.15s ease;
         }
+
+        .hudLabelBottom {
+            top: auto;
+            bottom: 8px;
+        }
+
+        #capacityLabel {
+            right: 8px;
+            flex-direction: row-reverse;
+        }
+
+        #capacityText {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .infoBtn {
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            padding: 0;
+            border: none;
+            background: none;
+            color: inherit;
+            cursor: inherit;
+            opacity: 0.65;
+        }
+
+        .hudLabel:hover .infoBtn,
+        .hudLabel:focus-within .infoBtn {
+            opacity: 0.85;
+        }
+
+        #sceneNotice {
+            position: fixed;
+            left: 50%;
+            bottom: 8px;
+            transform: translateX(-50%);
+            font-family: ui-monospace, 'Cascadia Mono', 'Cascadia Code', 'Courier New', monospace;
+            font-size: clamp(10pt, 2.4vw, 14pt);
+            letter-spacing: 0.06em;
+            color: #ffffff;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+            pointer-events: none;
+            z-index: 10;
+            max-width: calc(100vw - 32px);
+            text-align: center;
+        }
+
+        #sceneNotice.show {
+            opacity: 0.55;
+        }
+
+        #sceneInfoPanel {
+            position: fixed;
+            right: 8px;
+            bottom: 44px;
+            max-width: min(320px, calc(100vw - 16px));
+            padding: 10px 12px;
+            font-family: ui-monospace, 'Cascadia Mono', 'Cascadia Code', 'Courier New', monospace;
+            font-size: clamp(9pt, 2.2vw, 12pt);
+            line-height: 1.45;
+            letter-spacing: 0.04em;
+            color: #bdbdbd;
+            background: rgba(33, 33, 33, 0.92);
+            border: 1px solid rgba(189, 189, 189, 0.2);
+            border-radius: 6px;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+            pointer-events: none;
+            z-index: 11;
+        }
+
+        #sceneInfoPanel.show {
+            opacity: 0.65;
+            pointer-events: auto;
+        }
+
+        .hudInput::selection {
+            background: rgba(189, 189, 189, 0.35);
+            color: #ffffff;
+        }
     </style>
 </head>
 <body>
@@ -116,6 +199,22 @@
                 <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
             </svg>
         </button>
+    </div>
+    <div id="capacityLabel" class="hudLabel hudLabelBottom">
+        <span id="capacityText">0%</span>
+        <button type="button" class="copyBtn" aria-label="Copy share link">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
+            </svg>
+        </button>
+        <button type="button" class="infoBtn" id="sceneInfoBtn" aria-label="Scene capacity info" title="Scene capacity. When full, the least relevant moved orbs are removed to keep sharing working. Relevance favors large moves near your art cluster and recent edits. Click for details.">?</button>
+    </div>
+    <div id="sceneNotice" aria-live="polite"></div>
+    <div id="sceneInfoPanel" hidden>
+        Scene capacity limits how much moved-orb data fits in a share link.
+        When full, the least relevant edits are dropped: tiny nudges first, then far from your art cluster, then least recently edited.
+        Click the meter to cycle display: percent, bytes, orb count. Copy icon copies a share URL.
     </div>
 
     <script>
@@ -175,6 +274,274 @@
         const NEURONS_PER_CHUNK = Math.max(4, Math.round(DENSITY * (CHUNK_SIZE * CHUNK_SIZE) / 1_000_000));
 
         const layerRatios = [0.19, 0.33, 0.48];
+
+        // ── Scene persistence & sharing ─────────────────────────────────────
+        const SCENE_MAX_BYTES   = 1800;
+        const SCENE_MAX_ENTRIES = 100;
+        const SCENE_WARN_RATIO  = 0.8;
+        const SCENE_STORAGE_KEY = 'neuro-tab-scene-v1';
+
+        const sceneOverrides = new Map();
+        let _sceneByteSize   = 0;
+        let _warnShown       = false;
+        let _capacityMode    = parseInt(sessionStorage.getItem('capacityMode') || '0', 10) % 3;
+        let _persistTimer    = null;
+        let _urlSyncTimer    = null;
+        let _byteSizeTimer   = null;
+
+        const capacityTextEl = document.getElementById('capacityText');
+        const sceneNoticeEl  = document.getElementById('sceneNotice');
+        const sceneInfoBtn   = document.getElementById('sceneInfoBtn');
+        const sceneInfoPanel = document.getElementById('sceneInfoPanel');
+        let _noticeTimer     = null;
+
+        function neuronKey(cx, cy, layer, i) {
+            return `${cx},${cy}:${layer}:${i}`;
+        }
+
+        function defaultNeuronPos(cx, cy, layer, i) {
+            return {
+                x: cx * CHUNK_SIZE + chunkRand(cx, cy, layer, i, 0) * CHUNK_SIZE,
+                y: cy * CHUNK_SIZE + chunkRand(cx, cy, layer, i, 1) * CHUNK_SIZE
+            };
+        }
+
+        function getSceneAnchor() {
+            if (sceneOverrides.size === 0) return getViewCenterWorld();
+            let sx = 0, sy = 0;
+            for (const o of sceneOverrides.values()) { sx += o.x; sy += o.y; }
+            const n = sceneOverrides.size;
+            return { x: sx / n, y: sy / n };
+        }
+
+        function overrideRelevance(o, anchor) {
+            const disp = Math.hypot(o.x - o.ox, o.y - o.oy);
+            const dist = Math.hypot(o.x - anchor.x, o.y - anchor.y);
+            return disp + dist * 0.002 - o.t * 1e-9;
+        }
+
+        function regenChunkAt(cx, cy) {
+            const key = `${cx},${cy}`;
+            if (!activeChunks.has(key)) return;
+            activeChunks.set(key, generateChunk(cx, cy));
+            cacheValid = false;
+        }
+
+        function evictLeastRelevant() {
+            const anchor = getSceneAnchor();
+            let worstKey = null, worstScore = Infinity;
+            for (const [k, o] of sceneOverrides) {
+                const s = overrideRelevance(o, anchor);
+                if (s < worstScore) { worstScore = s; worstKey = k; }
+            }
+            if (!worstKey) return false;
+            const [cx, cy] = worstKey.split(':')[0].split(',').map(Number);
+            sceneOverrides.delete(worstKey);
+            regenChunkAt(cx, cy);
+            showSceneNotice('Least relevant edit removed');
+            return true;
+        }
+
+        function buildCompactScene() {
+            const c = getViewCenterWorld();
+            const o = [];
+            for (const v of sceneOverrides.values())
+                o.push([v.cx, v.cy, v.l, v.i, Math.round(v.x), Math.round(v.y)]);
+            return { s: SESSION_SEED, x: Math.round(c.x), y: Math.round(c.y), z: Math.round(camera.zoom * 100) / 100, o };
+        }
+
+        async function compressScenePayload(payload) {
+            const json = JSON.stringify(payload);
+            if (typeof CompressionStream === 'undefined')
+                return { raw: json, bytes: new TextEncoder().encode(json).length };
+            const stream = new Blob([json]).stream().pipeThrough(new CompressionStream('deflate'));
+            const buf = await new Response(stream).arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            let bin = '';
+            for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+            const b64 = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+            return { raw: b64, bytes: bytes.length, compressed: true };
+        }
+
+        async function decompressSceneParam(q) {
+            const bin = Uint8Array.from(atob(q.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+            if (typeof DecompressionStream === 'undefined') {
+                return JSON.parse(q);
+            }
+            const stream = new Blob([bin]).stream().pipeThrough(new DecompressionStream('deflate'));
+            return JSON.parse(await new Response(stream).text());
+        }
+
+        async function refreshSceneByteSize() {
+            const payload = buildCompactScene();
+            if (payload.o.length === 0) {
+                _sceneByteSize = 0;
+                updateCapacityHud();
+                return;
+            }
+            try {
+                const r = await compressScenePayload(payload);
+                _sceneByteSize = r.bytes;
+            } catch {
+                _sceneByteSize = new TextEncoder().encode(JSON.stringify(payload)).length;
+            }
+            updateCapacityHud();
+        }
+
+        function scheduleByteSizeRefresh() {
+            clearTimeout(_byteSizeTimer);
+            _byteSizeTimer = setTimeout(refreshSceneByteSize, 120);
+        }
+
+        function sceneBudgetRatio() {
+            return Math.min(1, _sceneByteSize / SCENE_MAX_BYTES);
+        }
+
+        function formatBytes(n) {
+            if (n < 1024) return `${n}B`;
+            return `${(n / 1024).toFixed(1)}k`;
+        }
+
+        function updateCapacityHud() {
+            const ratio = sceneBudgetRatio();
+            const count = sceneOverrides.size;
+            let text;
+            if (_capacityMode === 1)
+                text = `${formatBytes(_sceneByteSize)} / ${formatBytes(SCENE_MAX_BYTES)}`;
+            else if (_capacityMode === 2)
+                text = `${count} / ${SCENE_MAX_ENTRIES}`;
+            else
+                text = `${Math.round(ratio * 100)}%`;
+
+            capacityTextEl.textContent = text;
+            if (ratio >= SCENE_WARN_RATIO && ratio < 1)
+                capacityTextEl.style.color = '#bdbdbd';
+            else
+                capacityTextEl.style.color = '#ffffff';
+        }
+
+        function showSceneNotice(msg) {
+            sceneNoticeEl.textContent = msg;
+            sceneNoticeEl.classList.add('show');
+            clearTimeout(_noticeTimer);
+            _noticeTimer = setTimeout(() => sceneNoticeEl.classList.remove('show'), 2800);
+        }
+
+        function checkSceneBudgetWarning() {
+            const ratio = sceneBudgetRatio();
+            if (ratio >= SCENE_WARN_RATIO && ratio < 1 && !_warnShown) {
+                _warnShown = true;
+                showSceneNotice('Approaching scene limit');
+            }
+            if (ratio < SCENE_WARN_RATIO * 0.9) _warnShown = false;
+        }
+
+        function clearSceneOverrides() {
+            sceneOverrides.clear();
+            _sceneByteSize = 0;
+            _warnShown = false;
+            updateCapacityHud();
+            scheduleByteSizeRefresh();
+        }
+
+        function applyScenePayload(data) {
+            if (typeof data.s === 'number') {
+                SESSION_SEED = data.s & 0xFFFFFF;
+                updateSeedDisplay();
+            }
+            clearSceneOverrides();
+            if (Array.isArray(data.o)) {
+                for (const row of data.o) {
+                    if (!Array.isArray(row) || row.length < 6) continue;
+                    const [cx, cy, l, i, x, y] = row;
+                    const def = defaultNeuronPos(cx, cy, l, i);
+                    sceneOverrides.set(neuronKey(cx, cy, l, i), {
+                        cx, cy, l, i, x, y, ox: def.x, oy: def.y, t: performance.now()
+                    });
+                }
+            }
+            resetWorld();
+            if (typeof data.z === 'number')
+                camera.zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, data.z));
+            if (typeof data.x === 'number' && typeof data.y === 'number')
+                centerCameraOn(data.x, data.y);
+            scheduleByteSizeRefresh();
+            updateCapacityHud();
+        }
+
+        function persistSceneLocal() {
+            try {
+                localStorage.setItem(SCENE_STORAGE_KEY, JSON.stringify(buildCompactScene()));
+            } catch { /* quota */ }
+        }
+
+        function schedulePersistScene() {
+            clearTimeout(_persistTimer);
+            _persistTimer = setTimeout(persistSceneLocal, 400);
+        }
+
+        async function buildShareUrl() {
+            const payload = buildCompactScene();
+            const base = location.origin + location.pathname;
+            if (!payload.o || payload.o.length === 0)
+                return `${base}?s=${formatSeedHex(SESSION_SEED)}&x=${payload.x}&y=${payload.y}&z=${payload.z}`;
+            try {
+                const r = await compressScenePayload(payload);
+                return `${base}?q=${r.raw}`;
+            } catch {
+                return base + '?q=' + encodeURIComponent(JSON.stringify(payload));
+            }
+        }
+
+        function scheduleUrlSync() {
+            clearTimeout(_urlSyncTimer);
+            _urlSyncTimer = setTimeout(async () => {
+                if (sceneOverrides.size === 0) return;
+                try {
+                    const url = await buildShareUrl();
+                    if (url.length > 8000) return;
+                    history.replaceState(null, '', url);
+                } catch { /* ignore */ }
+            }, 900);
+        }
+
+        function saveSceneOverride(cx, cy, l, i, x, y) {
+            const key = neuronKey(cx, cy, l, i);
+            const def = defaultNeuronPos(cx, cy, l, i);
+            const isNew = !sceneOverrides.has(key);
+
+            if (isNew) {
+                while (sceneOverrides.size >= SCENE_MAX_ENTRIES && evictLeastRelevant()) {}
+            }
+
+            sceneOverrides.set(key, { cx, cy, l, i, x, y, ox: def.x, oy: def.y, t: performance.now() });
+
+            if (isNew) {
+                scheduleByteSizeRefresh();
+                setTimeout(async () => {
+                    await refreshSceneByteSize();
+                    while (_sceneByteSize > SCENE_MAX_BYTES && evictLeastRelevant()) {
+                        await refreshSceneByteSize();
+                    }
+                    checkSceneBudgetWarning();
+                }, 150);
+            } else {
+                scheduleByteSizeRefresh();
+            }
+
+            schedulePersistScene();
+            scheduleUrlSync();
+            updateCapacityHud();
+        }
+
+        function applyOverrideToNeuron(n, cx, cy, layer, i) {
+            const o = sceneOverrides.get(neuronKey(cx, cy, layer, i));
+            if (!o) return;
+            n.x = n.baseX = n.originX = o.x;
+            n.y = n.baseY = n.originY = o.y;
+            n.vx = n.vy = 0;
+            n.pinned = true;
+        }
 
         // Random once per page load — makes every session look different
         let SESSION_SEED = (Math.random() * 0xFFFFFF) | 0;
@@ -243,7 +610,9 @@
             }
             SESSION_SEED = parsed;
             updateSeedDisplay();
+            clearSceneOverrides();
             resetWorld();
+            schedulePersistScene();
             return true;
         }
 
@@ -321,6 +690,33 @@
 
         coordInputEl.addEventListener('focus', () => { _coordInputFocused = true; });
         coordInputEl.addEventListener('blur',  () => { _coordInputFocused = false; });
+
+        capacityTextEl.addEventListener('click', (e) => {
+            e.preventDefault();
+            _capacityMode = (_capacityMode + 1) % 3;
+            sessionStorage.setItem('capacityMode', String(_capacityMode));
+            updateCapacityHud();
+        });
+
+        document.querySelector('#capacityLabel .copyBtn').addEventListener('click', async (e) => {
+            e.preventDefault();
+            const url = await buildShareUrl();
+            navigator.clipboard?.writeText(url);
+            flashCopyBtn(e.currentTarget);
+            showSceneNotice('Share link copied');
+        });
+
+        sceneInfoBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const open = sceneInfoPanel.classList.toggle('show');
+            sceneInfoPanel.hidden = !open;
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!sceneInfoPanel.contains(e.target) && e.target !== sceneInfoBtn)
+                sceneInfoPanel.classList.remove('show');
+        });
 
         updateSeedDisplay();
         updateCoordLabel();
@@ -521,6 +917,11 @@
                     n.driftPhaseX = chunkRand(cx, cy, layer, i, 5) * Math.PI * 2;
                     n.driftPhaseY = chunkRand(cx, cy, layer, i, 6) * Math.PI * 2;
 
+                    n.chunkX = cx;
+                    n.chunkY = cy;
+                    n.index  = i;
+                    applyOverrideToNeuron(n, cx, cy, layer, i);
+
                     neurons[layer].push(n);
                 }
             }
@@ -569,6 +970,7 @@
             n.y = n.baseY = n.originY = n.y;
             n.vx = n.vy = 0;
             n.pinned = true;
+            saveSceneOverride(n.chunkX, n.chunkY, n.layer, n.index, n.x, n.y);
         }
 
         function getNeuronAt(wx, wy) {
@@ -770,11 +1172,14 @@
         window.addEventListener('resize', () => {
             width  = canvas.width  = window.innerWidth;
             height = canvas.height = window.innerHeight;
+            updateCoordLabel();
         });
 
         // ── Render loop ─────────────────────────────────────────────────────
 
         function animate() {
+            if (!_coordInputFocused) updateCoordLabel();
+
             // 1. Clear
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.fillStyle = colors.bg;
@@ -846,6 +1251,46 @@
 
             requestAnimationFrame(animate);
         }
+
+        async function initScene() {
+            const params = new URLSearchParams(location.search);
+            const q = params.get('q');
+            if (q) {
+                try {
+                    let data = q.startsWith('{') ? JSON.parse(q) : await decompressSceneParam(q);
+                    applyScenePayload(data);
+                    return;
+                } catch { /* fall through */ }
+            }
+
+            const s = params.get('s');
+            if (s) {
+                const parsed = parseSeedInput(s);
+                if (parsed !== null) {
+                    SESSION_SEED = parsed;
+                    updateSeedDisplay();
+                }
+                const z = parseFloat(params.get('z'));
+                const x = parseFloat(params.get('x'));
+                const y = parseFloat(params.get('y'));
+                if (!isNaN(z)) camera.zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+                if (!isNaN(x) && !isNaN(y)) centerCameraOn(x, y);
+            }
+
+            try {
+                const stored = localStorage.getItem(SCENE_STORAGE_KEY);
+                if (stored) {
+                    const data = JSON.parse(stored);
+                    if (data.s === SESSION_SEED && Array.isArray(data.o) && data.o.length)
+                        applyScenePayload(data);
+                }
+            } catch { /* ignore */ }
+        }
+
+        initScene().then(() => {
+            updateCoordLabel();
+            refreshSceneByteSize();
+        });
 
         animate();
     </script>
