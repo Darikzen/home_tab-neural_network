@@ -868,15 +868,6 @@
                 return true;
             }
             if (on) {
-                if (!silent && !confirm(
-                    'Enable archive mode?\n\n' +
-                    'No share-link size limit — nothing will be auto-removed.\n' +
-                    'Use the download icon to save a scene file; Import is in the info panel.\n' +
-                    'The address bar will not carry the full scene.'
-                )) {
-                    archiveModeChk.checked = false;
-                    return false;
-                }
                 _archiveMode = true;
                 localStorage.setItem(ARCHIVE_MODE_KEY, '1');
                 _warnShown = false;
