@@ -79,21 +79,57 @@
             text-align: right;
         }
 
-        .copyBtn {
+        .hudIconBtn {
             flex-shrink: 0;
             display: flex;
             align-items: center;
-            padding: 0;
+            justify-content: center;
+            min-width: 32px;
+            min-height: 32px;
+            padding: 7px;
+            margin: -7px;
             border: none;
-            background: none;
+            border-radius: 6px;
+            background: transparent;
             color: inherit;
-            cursor: inherit;
+            cursor: pointer;
             opacity: 0;
+            transition: opacity 0.5s ease, background-color 0.15s ease, transform 0.12s ease;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
         }
 
-        .copyBtn.flash {
+        .hudLabel:hover .hudIconBtn,
+        .hudLabel:focus-within .hudIconBtn {
+            opacity: 0.8;
+        }
+
+        .hudIconBtn:hover {
             opacity: 1;
-            transition: opacity 0.15s ease;
+            background: rgba(189, 189, 189, 0.14);
+        }
+
+        .hudIconBtn:active {
+            opacity: 1;
+            background: rgba(189, 189, 189, 0.22);
+            transform: scale(0.94);
+        }
+
+        .hudIconBtn.copied {
+            opacity: 1;
+            background: rgba(189, 189, 189, 0.28);
+        }
+
+        .hudIconBtn .iconCheck {
+            display: none;
+        }
+
+        .hudIconBtn.copied .iconCopy {
+            display: none;
+        }
+
+        .hudIconBtn.copied .iconCheck {
+            display: block;
         }
 
         .hudLabelBottom {
@@ -112,37 +148,18 @@
             cursor: pointer;
             user-select: none;
             text-align: right;
-            min-width: 5.5em;
+            min-width: 7em;
         }
 
         .capacityActions {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 2px;
             flex-shrink: 0;
         }
 
-        .hudIconBtn {
-            flex-shrink: 0;
-            display: flex;
-            align-items: center;
-            padding: 0;
-            border: none;
-            background: none;
-            color: inherit;
-            cursor: inherit;
-            opacity: 0;
-            transition: opacity 0.5s ease;
-        }
-
-        #capacityLabel:hover .hudIconBtn,
-        #capacityLabel:focus-within .hudIconBtn {
-            opacity: 0.85;
-        }
-
-        .hudIconBtn.flash {
-            opacity: 1;
-            transition: opacity 0.15s ease;
+        .hudIconBtn.infoBtn {
+            cursor: pointer;
         }
 
         #sceneNotice {
@@ -201,32 +218,41 @@
     <canvas id="neuralCanvas"></canvas>
     <div id="seedLabel" class="hudLabel">
         <input id="seedInput" class="hudInput" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="7" aria-label="Seed" title="Paste or type hex seed, Enter to apply">
-        <button type="button" class="copyBtn" aria-label="Copy seed">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <button type="button" class="hudIconBtn copyBtn" aria-label="Copy seed">
+            <svg class="iconCopy" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                 <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
                 <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
+            </svg>
+            <svg class="iconCheck" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                <path d="M3.5 7.2 5.8 9.5 10.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
         </button>
     </div>
     <div id="coordLabel" class="hudLabel">
         <input id="coordInput" class="hudInput" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="View center coordinates" title="View center x, y — paste and Enter to go">
-        <button type="button" class="copyBtn" aria-label="Copy coordinates">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <button type="button" class="hudIconBtn copyBtn" aria-label="Copy coordinates">
+            <svg class="iconCopy" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                 <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
                 <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
+            </svg>
+            <svg class="iconCheck" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                <path d="M3.5 7.2 5.8 9.5 10.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
         </button>
     </div>
     <div id="capacityLabel" class="hudLabel hudLabelBottom">
         <span id="capacityText">0%</span>
         <div class="capacityActions">
-            <button type="button" class="hudIconBtn" id="capacityCopyBtn" aria-label="Copy share link">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <button type="button" class="hudIconBtn copyBtn" id="capacityCopyBtn" aria-label="Copy share link">
+                <svg class="iconCopy" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                     <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
                     <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
                 </svg>
+                <svg class="iconCheck" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <path d="M3.5 7.2 5.8 9.5 10.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
             </button>
-            <button type="button" class="hudIconBtn" id="sceneInfoBtn" aria-label="Scene capacity info">
+            <button type="button" class="hudIconBtn infoBtn" id="sceneInfoBtn" aria-label="Scene capacity info">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
                     <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.2"/>
                     <circle cx="7" cy="4.35" r="0.65" fill="currentColor"/>
@@ -658,22 +684,40 @@
         }
 
         function flashCopyBtn(btn) {
-            btn.classList.add('flash');
+            btn.classList.add('copied');
             clearTimeout(btn._fadeTimer);
-            btn._fadeTimer = setTimeout(() => {
-                btn.style.transition = 'opacity 1.0s ease';
-                btn.classList.remove('flash');
-                btn.style.transition = '';
-            }, 600);
+            btn._fadeTimer = setTimeout(() => btn.classList.remove('copied'), 1400);
+        }
+
+        async function copyToClipboard(text) {
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(text);
+                    return true;
+                }
+            } catch { /* fallback below */ }
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                return ok;
+            } catch {
+                return false;
+            }
         }
 
         function setupHudField({ inputEl, copyBtn, onApply, getCopyText }) {
             let editStart = '';
 
-            copyBtn.addEventListener('click', (e) => {
+            copyBtn.addEventListener('click', async (e) => {
                 e.preventDefault();
-                navigator.clipboard?.writeText(getCopyText());
-                flashCopyBtn(copyBtn);
+                e.stopPropagation();
+                if (await copyToClipboard(getCopyText())) flashCopyBtn(copyBtn);
             });
 
             inputEl.addEventListener('keydown', (e) => {
@@ -725,10 +769,12 @@
 
         document.getElementById('capacityCopyBtn').addEventListener('click', async (e) => {
             e.preventDefault();
+            e.stopPropagation();
             const url = await buildShareUrl();
-            navigator.clipboard?.writeText(url);
-            flashCopyBtn(e.currentTarget);
-            showSceneNotice('Share link copied');
+            if (await copyToClipboard(url)) {
+                flashCopyBtn(e.currentTarget);
+                showSceneNotice('Share link copied');
+            }
         });
 
         sceneInfoBtn.addEventListener('click', (e) => {
