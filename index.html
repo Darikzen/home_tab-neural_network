@@ -103,15 +103,26 @@
 
         #capacityLabel {
             right: 8px;
-            flex-direction: row-reverse;
+            flex-direction: row;
+            justify-content: flex-end;
+            gap: 10px;
         }
 
         #capacityText {
             cursor: pointer;
             user-select: none;
+            text-align: right;
+            min-width: 5.5em;
         }
 
-        .infoBtn {
+        .capacityActions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .hudIconBtn {
             flex-shrink: 0;
             display: flex;
             align-items: center;
@@ -120,12 +131,18 @@
             background: none;
             color: inherit;
             cursor: inherit;
-            opacity: 0.65;
+            opacity: 0;
+            transition: opacity 0.5s ease;
         }
 
-        .hudLabel:hover .infoBtn,
-        .hudLabel:focus-within .infoBtn {
+        #capacityLabel:hover .hudIconBtn,
+        #capacityLabel:focus-within .hudIconBtn {
             opacity: 0.85;
+        }
+
+        .hudIconBtn.flash {
+            opacity: 1;
+            transition: opacity 0.15s ease;
         }
 
         #sceneNotice {
@@ -202,13 +219,21 @@
     </div>
     <div id="capacityLabel" class="hudLabel hudLabelBottom">
         <span id="capacityText">0%</span>
-        <button type="button" class="copyBtn" aria-label="Copy share link">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
-                <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
-            </svg>
-        </button>
-        <button type="button" class="infoBtn" id="sceneInfoBtn" aria-label="Scene capacity info" title="Scene capacity. When full, the least relevant moved orbs are removed to keep sharing working. Relevance favors large moves near your art cluster and recent edits. Click for details.">?</button>
+        <div class="capacityActions">
+            <button type="button" class="hudIconBtn" id="capacityCopyBtn" aria-label="Copy share link">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <rect x="3.5" y="0.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                    <rect x="0.5" y="3.5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="#212121"/>
+                </svg>
+            </button>
+            <button type="button" class="hudIconBtn" id="sceneInfoBtn" aria-label="Scene capacity info">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.2"/>
+                    <circle cx="7" cy="4.35" r="0.65" fill="currentColor"/>
+                    <line x1="7" y1="6.25" x2="7" y2="10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                </svg>
+            </button>
+        </div>
     </div>
     <div id="sceneNotice" aria-live="polite"></div>
     <div id="sceneInfoPanel" hidden>
@@ -698,7 +723,7 @@
             updateCapacityHud();
         });
 
-        document.querySelector('#capacityLabel .copyBtn').addEventListener('click', async (e) => {
+        document.getElementById('capacityCopyBtn').addEventListener('click', async (e) => {
             e.preventDefault();
             const url = await buildShareUrl();
             navigator.clipboard?.writeText(url);
@@ -1278,11 +1303,13 @@
             }
 
             try {
-                const stored = localStorage.getItem(SCENE_STORAGE_KEY);
-                if (stored) {
-                    const data = JSON.parse(stored);
-                    if (data.s === SESSION_SEED && Array.isArray(data.o) && data.o.length)
-                        applyScenePayload(data);
+                if (!params.has('q') && !params.has('s')) {
+                    const stored = localStorage.getItem(SCENE_STORAGE_KEY);
+                    if (stored) {
+                        const data = JSON.parse(stored);
+                        if (data.s === SESSION_SEED && Array.isArray(data.o) && data.o.length)
+                            applyScenePayload(data);
+                    }
                 }
             } catch { /* ignore */ }
         }
