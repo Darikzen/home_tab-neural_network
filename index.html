@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>New Tab</title>
     <style>
         * {
@@ -48,13 +48,15 @@
         }
 
         #seedLabel {
-            left: 8px;
+            left: max(8px, env(safe-area-inset-left, 0px));
+            top: max(8px, env(safe-area-inset-top, 0px));
             flex-direction: row;
             gap: 10px;
         }
 
         #coordLabel {
-            right: 8px;
+            right: max(8px, env(safe-area-inset-right, 0px));
+            top: max(8px, env(safe-area-inset-top, 0px));
             flex-direction: row;
             justify-content: flex-end;
             gap: 10px;
@@ -243,19 +245,49 @@
             display: none;
         }
 
-        @media (hover: none) {
-            .hudLabel:active .hudIconBtn {
+        @media (hover: none), (pointer: coarse) {
+            /* Touch: HUD must stay visible — there is no hover to reveal it */
+            .hudLabel {
+                opacity: 0.55;
+                pointer-events: auto;
+            }
+
+            .hudLabel:focus-within {
+                opacity: 0.8;
+            }
+
+            .hudLabel .hudIconBtn {
                 opacity: 0.9;
+                min-width: 40px;
+                min-height: 40px;
+                padding: 10px;
+                margin: -10px;
+            }
+
+            #capacityText {
+                min-height: 40px;
+                display: inline-flex;
+                align-items: center;
+            }
+
+            .archiveToggle {
+                min-width: 40px;
+                min-height: 40px;
+            }
+
+            .archiveBox {
+                width: 14px;
+                height: 14px;
             }
         }
 
         .hudLabelBottom {
             top: auto;
-            bottom: 8px;
+            bottom: max(8px, env(safe-area-inset-bottom, 0px));
         }
 
         #capacityLabel {
-            right: 8px;
+            right: max(8px, env(safe-area-inset-right, 0px));
             flex-direction: row;
             justify-content: flex-end;
             gap: 10px;
@@ -795,7 +827,7 @@
                     '<p class="infoTitle">Archive mode</p>' +
                     '<div class="infoBody">' +
                     '<p>No share-link limit. Edits stay in this browser and in Save/Import files.</p>' +
-                    '<p>Moved orbs glow; double-click resets one (eases home).</p>' +
+                    '<p>Moved orbs glow; double-click or long-press resets one (eases home).</p>' +
                     '<p>Meter: data size or orb count. Download icon saves .json; Import loads one.</p>' +
                     '</div>';
             } else {
@@ -803,7 +835,7 @@
                     '<p class="infoTitle">Share mode</p>' +
                     '<div class="infoBody">' +
                     '<p>Capacity limits moved-orb data in a share link (fixed overhead excluded from the meter).</p>' +
-                    '<p>Moved orbs glow; double-click resets one. When full, least relevant edits drop.</p>' +
+                    '<p>Moved orbs glow; double-click or long-press resets one. When full, least relevant edits drop.</p>' +
                     '<p>Check the box for unlimited archive mode. Copy icon copies a share URL.</p>' +
                     '</div>';
             }
@@ -1961,11 +1993,38 @@
         });
 
         // ── Touch handling ──────────────────────────────────────────────────
-        // Mirrors the mouse/wheel behaviour exactly:
-        //   1 finger  → pan canvas  (or drag neuron if starting on one)
-        //   2 fingers → pinch-zoom + pan simultaneously, in one transform step
+        //   1 finger  → pan / drag orb; long-press or double-tap pinned orb to release
+        //   2 fingers → pinch-zoom + pan
+        // HUD touches are left alone so inputs and buttons stay usable.
 
-        const _touch = { activeTouches: 0, prevMid: null, prevDist: 0 };
+        const _touch = {
+            activeTouches: 0,
+            prevMid: null,
+            prevDist: 0,
+            canvasGesture: false,
+            longTimer: null,
+            longNeuron: null,
+            startX: 0,
+            startY: 0,
+            moved: false,
+            lastTapT: 0,
+            lastTapX: 0,
+            lastTapY: 0
+        };
+
+        function isHudTouchTarget(el) {
+            return !!(el && el.closest && el.closest(
+                '.hudLabel, #sceneInfoPanel, #sceneNotice, #archiveLeaveDialog, input, button, label, a'
+            ));
+        }
+
+        function clearLongPress() {
+            if (_touch.longTimer) {
+                clearTimeout(_touch.longTimer);
+                _touch.longTimer = null;
+            }
+            _touch.longNeuron = null;
+        }
 
         function _touchMidDist(t1, t2) {
             const mx = (t1.clientX + t2.clientX) * 0.5;
@@ -1982,23 +2041,49 @@
         }
 
         window.addEventListener('touchstart', (e) => {
-            e.preventDefault();
             _touch.activeTouches = e.touches.length;
+
+            // Let seed/coords/capacity/archive/info receive normal taps & focus
+            if (e.touches.length === 1 && isHudTouchTarget(e.target)) {
+                _touch.canvasGesture = false;
+                clearLongPress();
+                return;
+            }
+
+            e.preventDefault();
+            _touch.canvasGesture = true;
 
             if (e.touches.length === 1) {
                 const t = e.touches[0];
                 const w = screenToWorld(t.clientX, t.clientY);
                 setMouseWorld(w);
+                _touch.startX = t.clientX;
+                _touch.startY = t.clientY;
+                _touch.moved = false;
+                clearLongPress();
+
                 const neuron = getNeuronAt(w.x, w.y);
                 if (neuron) {
                     draggedNeuron = neuron;
+                    if (neuron.pinned) {
+                        _touch.longNeuron = neuron;
+                        _touch.longTimer = setTimeout(() => {
+                            if (_touch.longNeuron && !_touch.moved) {
+                                const n = _touch.longNeuron;
+                                clearLongPress();
+                                draggedNeuron = null;
+                                unpinNeuron(n);
+                                showSceneNotice('Orb released');
+                            }
+                        }, 480);
+                    }
                 } else {
                     isPanning = true;
                     panStart  = { x: t.clientX, y: t.clientY };
                     panOrigin = { x: camera.x,  y: camera.y  };
                 }
             } else if (e.touches.length === 2) {
-                // Second finger lands — cancel any single-touch op cleanly
+                clearLongPress();
                 _releaseDraggedNeuron();
                 isPanning = false;
                 const { mx, my, dist } = _touchMidDist(e.touches[0], e.touches[1]);
@@ -2008,10 +2093,17 @@
         }, { passive: false });
 
         window.addEventListener('touchmove', (e) => {
+            if (!_touch.canvasGesture) return;
             e.preventDefault();
 
             if (e.touches.length === 1 && _touch.activeTouches === 1) {
                 const t = e.touches[0];
+                const dx = t.clientX - _touch.startX;
+                const dy = t.clientY - _touch.startY;
+                if (dx * dx + dy * dy > 100) {
+                    _touch.moved = true;
+                    clearLongPress();
+                }
                 const w = screenToWorld(t.clientX, t.clientY);
                 setMouseWorld(w);
                 if (draggedNeuron) {
@@ -2024,10 +2116,6 @@
 
             } else if (e.touches.length === 2 && _touch.prevMid) {
                 const { mx, my, dist } = _touchMidDist(e.touches[0], e.touches[1]);
-
-                // Combined pinch+pan in a single transform:
-                // anchor the world point under the OLD midpoint to the NEW midpoint.
-                // This handles both zoom and translate with no drift.
                 const factor  = dist / _touch.prevDist;
                 const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, camera.zoom * factor));
                 const wx = (_touch.prevMid.x - camera.x) / camera.zoom;
@@ -2035,14 +2123,15 @@
                 camera.zoom = newZoom;
                 camera.x    = mx - wx * camera.zoom;
                 camera.y    = my - wy * camera.zoom;
-
                 _touch.prevMid  = { x: mx, y: my };
                 _touch.prevDist = dist;
             }
         }, { passive: false });
 
         function _onTouchEnd(e) {
-            e.preventDefault();
+            const wasCanvas = _touch.canvasGesture;
+            const pendingNeuron = _touch.longNeuron;
+            const wasMoved = _touch.moved;
             _touch.activeTouches = e.touches.length;
 
             if (e.touches.length < 2) {
@@ -2051,10 +2140,33 @@
             }
 
             if (e.touches.length === 0) {
-                _releaseDraggedNeuron();
+                // Double-tap pinned orb to release
+                if (wasCanvas && !wasMoved && pendingNeuron && pendingNeuron.pinned) {
+                    const now = performance.now();
+                    const t = e.changedTouches[0];
+                    const dt = now - _touch.lastTapT;
+                    const ddx = t.clientX - _touch.lastTapX;
+                    const ddy = t.clientY - _touch.lastTapY;
+                    if (dt < 350 && ddx * ddx + ddy * ddy < 1600) {
+                        clearLongPress();
+                        draggedNeuron = null;
+                        unpinNeuron(pendingNeuron);
+                        showSceneNotice('Orb released');
+                        _touch.lastTapT = 0;
+                        isPanning = false;
+                        _touch.canvasGesture = false;
+                        return;
+                    }
+                    _touch.lastTapT = now;
+                    _touch.lastTapX = t.clientX;
+                    _touch.lastTapY = t.clientY;
+                }
+                clearLongPress();
+                if (wasCanvas) _releaseDraggedNeuron();
                 isPanning = false;
+                _touch.canvasGesture = false;
             } else if (e.touches.length === 1) {
-                // One finger remains after lifting second — restart single-touch pan
+                clearLongPress();
                 isPanning = false;
                 if (!draggedNeuron) {
                     isPanning = true;
